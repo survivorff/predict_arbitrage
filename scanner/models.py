@@ -177,6 +177,14 @@ class ArbitrageOpportunity(BaseModel):
     recommended_size_usd: float
     detected_at: datetime
     data_age_seconds: float
+    # 链上 gas 成本核算（缺口 E-1）。gas 是**每笔交易的固定成本**，不随规模缩放（与按
+    # 名义额缩放的手续费本质不同），因此在「整笔交易」层面核算，而非按对加权进 net_margin。
+    # 仅当配置了 gas 估算（gas_cost_per_leg_usd>0）时填充，否则为 None（诚实表示「未建模」）。
+    #   gas_cost_usd：本次套利两腿的链上交易成本估算合计。
+    #   net_profit_after_gas_usd：在 recommended_size 规模下，扣除 gas 后的**绝对美元利润**。
+    #     这是判断薄盘机会是否真赚钱的关键——按对的 net_profit_margin 为正，扣 gas 后仍可能为负。
+    gas_cost_usd: Optional[float] = None
+    net_profit_after_gas_usd: Optional[float] = None
 
     @field_validator("recommended_size_usd")
     @classmethod

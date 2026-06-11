@@ -172,6 +172,9 @@ class OpportunityResponse(BaseModel):
     detected_at: datetime
     data_age_seconds: float
     is_stale: bool
+    # 扣 gas 后的真实美元利润核算（缺口 E-1）。未配置 gas 估算时为 None（诚实表示「未建模」）。
+    gas_cost_usd: Optional[float] = None
+    net_profit_after_gas_usd: Optional[float] = None
 
     @classmethod
     def from_model(
@@ -197,6 +200,8 @@ class OpportunityResponse(BaseModel):
             detected_at=opp.detected_at,
             data_age_seconds=opp.data_age_seconds,
             is_stale=opp.data_age_seconds > staleness_threshold,
+            gas_cost_usd=opp.gas_cost_usd,
+            net_profit_after_gas_usd=opp.net_profit_after_gas_usd,
         )
 
 

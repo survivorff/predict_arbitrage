@@ -47,6 +47,18 @@ scanner:
   #   thinnest leg's liquidity) is below this — tiny size means gas eats the profit.
   max_implied_prob_divergence: 0.10
   min_recommended_size_usd: 20.0
+  # On-chain gas accounting (gap E-1). Gas is a FIXED per-leg/per-transaction cost
+  # that does NOT scale with position size (unlike fees, which scale with notional).
+  # So it is accounted at the whole-trade level: profit at recommended_size minus gas.
+  #   gas_cost_per_leg_usd: estimated on-chain cost per leg (USD). 0 = not modeled
+  #     (default; behavior unchanged, and gas fields reported as null/"unmodeled").
+  #   min_net_profit_after_gas_usd: skip an opportunity whose absolute USD profit
+  #     after subtracting gas falls below this floor (only active when gas > 0).
+  # Set realistic values once trading live (varies by chain + gas price), e.g.
+  #   gas_cost_per_leg_usd: 0.5
+  #   min_net_profit_after_gas_usd: 5.0
+  gas_cost_per_leg_usd: 0.0
+  min_net_profit_after_gas_usd: 0.0
   # Trade plan/order persistence (Phase 3, slice H). Omit/empty for in-memory
   # (lost on restart); set a file path for SQLite so plans/orders survive
   # restarts and are auditable.

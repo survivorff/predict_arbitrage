@@ -110,6 +110,13 @@ class ArbitrageEngine:
     #   薄盘机会的利润易被链上 gas 吃掉。0=不启用。
     max_implied_prob_divergence: Optional[float] = None
     min_recommended_size_usd: float = 0.0
+    # 链上 gas 成本核算（缺口 E-1）。gas 是**每笔交易/每腿的固定成本**，不随规模缩放
+    # （与按名义额缩放的手续费本质不同）——这是关键设计点（详见 docs/15 ADR-004）。
+    #   gas_cost_per_leg_usd：每条腿的链上交易成本估算（USD）。0=不建模 gas（默认，行为不变）。
+    #   min_net_profit_after_gas_usd：扣 gas 后的**绝对美元利润**下限；低于此值则跳过该机会
+    #     （仅当 gas_cost_per_leg_usd>0 时生效）。用于过滤「按对为正、扣 gas 后不赚」的薄盘尘埃。
+    gas_cost_per_leg_usd: float = 0.0
+    min_net_profit_after_gas_usd: float = 0.0
 
     # -- public API ---------------------------------------------------------
 
@@ -185,6 +192,24 @@ class ArbitrageEngine:
         if recommended_size_usd < self.min_recommended_size_usd:
             return None
 
+        # 链上 gas 核算（缺口 E-1）：gas 是**整笔交易的固定成本**，不随规模缩放，故在
+        # recommended_size 规模上核算「扣 gas 后的绝对美元利润」，而非把 gas 按对摊进
+        # net_margin（那样会错误地让 gas 随规模缩放）。详见 docs/15 ADR-004。
+        #   - 在 recommended_size 规模下，部署资本≈recommended_size_usd，毛利润≈
+        #     recommended_size_usd × net_margin（net_margin=利润/成本）。
+        #   - 扣除两腿 gas 固定成本后得净美元利润。
+        gas_cost_usd: Optional[float] = None
+        net_profit_after_gas_usd: Optional[float] = None
+        if self.gas_cost_per_leg_usd > 0:
+            total_gas = self.gas_cost_per_leg_usd * len(chosen)
+            gross_profit_usd = recommended_size_usd * net_margin
+            after_gas = gross_profit_usd - total_gas
+            # gas 闸门：扣 gas 后绝对利润低于下限 → 不是真赚钱，跳过。
+            if after_gas < self.min_net_profit_after_gas_usd:
+                return None
+            gas_cost_usd = total_gas
+            net_profit_after_gas_usd = after_gas
+
         now = self.clock()
         data_age_seconds = max(leg.age_seconds for leg in chosen)
 
@@ -208,6 +233,8 @@ class ArbitrageEngine:
             recommended_size_usd=recommended_size_usd,
             detected_at=now,
             data_age_seconds=data_age_seconds,
+            gas_cost_usd=gas_cost_usd,
+            net_profit_after_gas_usd=net_profit_after_gas_usd,
         )
 
     # -- helpers ------------------------------------------------------------

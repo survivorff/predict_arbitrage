@@ -530,6 +530,8 @@ def build_application(
         staleness_threshold_seconds=settings.staleness_threshold_seconds,
         max_implied_prob_divergence=settings.max_implied_prob_divergence,
         min_recommended_size_usd=settings.min_recommended_size_usd,
+        gas_cost_per_leg_usd=settings.gas_cost_per_leg_usd,
+        min_net_profit_after_gas_usd=settings.min_net_profit_after_gas_usd,
     )
 
     opportunity_service = OpportunityService(

@@ -491,3 +491,52 @@ def test_market_fee_does_not_lower_below_config_model():
     eng = ArbitrageEngine(fee_models={"kalshi": KalshiFeeModel()}, clock=_clock)
     opp = eng.evaluate_group(group)
     assert opp is not None  # Kalshi 非线性费用仍生效（市场 fee_rate=0 不会把它降为 0）
+
+
+# ---------------------------------------------------------------------------
+# 链上 gas 核算（缺口 E-1）：gas 是整笔交易固定成本，按 recommended_size 规模核算
+# 「扣 gas 后绝对美元利润」，而非按对摊进 net_margin。
+# ---------------------------------------------------------------------------
+
+def _arb_group_for_gas(liq: float) -> EquivalentMarketGroup:
+    """构造一个正边际套利组：YES 在 polymarket 便宜、NO 在 kalshi 便宜，各 0.45。
+
+    cost_per_pair=0.90 → net_margin=(1-0.9)/0.9≈0.1111；被选两腿的流动性=liq，
+    故 recommended_size_usd=liq。借此控制规模以测 gas 闸门。
+    """
+    poly = _market("polymarket", yes_ask=0.45, no_ask=0.62, yes_liq=liq, no_liq=1000.0)
+    kalshi = _market("kalshi", yes_ask=0.62, no_ask=0.45, yes_liq=1000.0, no_liq=liq)
+    return _binary_group([poly, kalshi])
+
+
+def test_gas_gate_skips_thin_opportunity_when_gas_exceeds_profit():
+    """薄盘：毛利润(≈30×0.111=3.33) < 两腿 gas(2×2=4) → 扣 gas 后为负，跳过。"""
+    engine = ArbitrageEngine(clock=_clock, gas_cost_per_leg_usd=2.0)
+    assert engine.evaluate_group(_arb_group_for_gas(liq=30.0)) is None
+
+
+def test_gas_accounted_when_profit_exceeds_gas():
+    """规模足够：扣 gas 后仍正 → 保留，并在机会上填充 gas/after-gas 字段。"""
+    engine = ArbitrageEngine(clock=_clock, gas_cost_per_leg_usd=2.0)
+    opp = engine.evaluate_group(_arb_group_for_gas(liq=300.0))
+    assert opp is not None
+    assert opp.gas_cost_usd == 4.0
+    expected_after = 300.0 * ((1 - 0.9) / 0.9) - 4.0
+    assert opp.net_profit_after_gas_usd == pytest.approx(expected_after, rel=1e-6)
+
+
+def test_gas_not_modeled_by_default_fields_none():
+    """默认不建模 gas（gas_cost_per_leg_usd=0）→ 不闸门、字段为 None（诚实表示未建模）。"""
+    engine = ArbitrageEngine(clock=_clock)
+    opp = engine.evaluate_group(_arb_group_for_gas(liq=30.0))
+    assert opp is not None
+    assert opp.gas_cost_usd is None
+    assert opp.net_profit_after_gas_usd is None
+
+
+def test_gas_min_net_profit_floor_gates_below_threshold():
+    """扣 gas 后利润为正(≈29.33)但低于下限(50) → 仍跳过（薄盘尘埃过滤）。"""
+    engine = ArbitrageEngine(
+        clock=_clock, gas_cost_per_leg_usd=2.0, min_net_profit_after_gas_usd=50.0
+    )
+    assert engine.evaluate_group(_arb_group_for_gas(liq=300.0)) is None

@@ -145,6 +145,11 @@ class ScannerSettings(BaseModel):
     #   min_recommended_size_usd：可成交规模低于此值则跳过（薄盘利润易被 gas 吃掉）。0=不启用。
     max_implied_prob_divergence: Optional[float] = None
     min_recommended_size_usd: float = 0.0
+    # 链上 gas 成本核算（缺口 E-1）。gas 是每笔交易/每腿的固定成本，不随规模缩放。
+    #   gas_cost_per_leg_usd：每条腿的链上交易成本估算（USD）。0=不建模（默认，行为不变）。
+    #   min_net_profit_after_gas_usd：扣 gas 后绝对美元利润下限，低于则跳过（仅当 gas>0 生效）。
+    gas_cost_per_leg_usd: float = 0.0
+    min_net_profit_after_gas_usd: float = 0.0
     # 交易计划/订单持久化（Phase 3 · 切片 H）。None 表示用内存存储（重启丢失）；
     # 设为文件路径（如 "trades.db"）则启用 SQLite 持久化，计划/订单跨重启可恢复、可对账。
     trade_store_path: Optional[str] = None
