@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# 运行时生成的信号持久化数据库（Phase Two · 切片 B）
+*.db
+signals.db

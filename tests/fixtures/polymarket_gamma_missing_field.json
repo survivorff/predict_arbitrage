@@ -1,0 +1,14 @@
+[
+  {
+    "id": "0x9999",
+    "conditionId": "0xcond-missing-volume",
+    "slug": "will-team-x-win-championship",
+    "question": "Will Team X win the championship?",
+    "active": true,
+    "closed": false,
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.40\", \"0.60\"]",
+    "clobTokenIds": "[\"300001\", \"300002\"]",
+    "liquidityNum": 5000.0
+  }
+]

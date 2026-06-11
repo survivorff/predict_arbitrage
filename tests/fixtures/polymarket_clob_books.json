@@ -1,0 +1,64 @@
+{
+  "100001": {
+    "market": "0xcond-election-2024",
+    "asset_id": "100001",
+    "bids": [
+      {"price": "0.60", "size": "1200"},
+      {"price": "0.61", "size": "800"}
+    ],
+    "asks": [
+      {"price": "0.63", "size": "900"},
+      {"price": "0.64", "size": "1500"}
+    ]
+  },
+  "100002": {
+    "market": "0xcond-election-2024",
+    "asset_id": "100002",
+    "bids": [
+      {"price": "0.36", "size": "1000"}
+    ],
+    "asks": [
+      {"price": "0.39", "size": "700"}
+    ]
+  },
+  "200001": {
+    "market": "0xcond-rates-hike",
+    "asset_id": "200001",
+    "bids": [
+      {"price": "0.14", "size": "500"}
+    ],
+    "asks": [
+      {"price": "0.16", "size": "650"}
+    ]
+  },
+  "200002": {
+    "market": "0xcond-rates-hike",
+    "asset_id": "200002",
+    "bids": [
+      {"price": "0.84", "size": "400"}
+    ],
+    "asks": [
+      {"price": "0.86", "size": "550"}
+    ]
+  },
+  "300001": {
+    "market": "0xcond-missing-volume",
+    "asset_id": "300001",
+    "bids": [
+      {"price": "0.39", "size": "300"}
+    ],
+    "asks": [
+      {"price": "0.41", "size": "450"}
+    ]
+  },
+  "300002": {
+    "market": "0xcond-missing-volume",
+    "asset_id": "300002",
+    "bids": [
+      {"price": "0.59", "size": "320"}
+    ],
+    "asks": [
+      {"price": "0.61", "size": "480"}
+    ]
+  }
+}

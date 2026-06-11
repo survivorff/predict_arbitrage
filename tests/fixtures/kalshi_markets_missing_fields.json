@@ -1,0 +1,28 @@
+{
+  "cursor": "",
+  "markets": [
+    {
+      "ticker": "NOVOL-24-A",
+      "event_ticker": "NOVOL-24",
+      "title": "Market missing volume and liquidity",
+      "subtitle": "No magnitudes reported",
+      "status": "open",
+      "yes_bid": 30,
+      "yes_ask": 32,
+      "no_bid": 68,
+      "no_ask": 70,
+      "last_price": 31
+    },
+    {
+      "ticker": "BIDONLY-24-A",
+      "event_ticker": "BIDONLY-24",
+      "title": "Market with only a bid quote and no last price",
+      "subtitle": "Bid only",
+      "status": "open",
+      "yes_bid": 40,
+      "no_ask": 60,
+      "dollar_volume": 200000,
+      "liquidity": 50000
+    }
+  ]
+}

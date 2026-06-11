@@ -1,0 +1,47 @@
+{
+  "cursor": "",
+  "markets": [
+    {
+      "ticker": "INXD-23DEC29-B5000",
+      "event_ticker": "INXD-23DEC29",
+      "title": "Will the S&P 500 close above 5000 on Dec 29?",
+      "subtitle": "Above 5000",
+      "status": "open",
+      "yes_bid": 62,
+      "yes_ask": 64,
+      "no_bid": 36,
+      "no_ask": 38,
+      "last_price": 63,
+      "dollar_volume": 1234567,
+      "liquidity": 4500000
+    },
+    {
+      "ticker": "PRES-24-DEM",
+      "event_ticker": "PRES-24",
+      "title": "Will the Democratic candidate win the 2024 election?",
+      "subtitle": "Democrat wins",
+      "status": "open",
+      "yes_bid": 48,
+      "yes_ask": 50,
+      "no_bid": 50,
+      "no_ask": 52,
+      "last_price": 49,
+      "dollar_volume": 98765432,
+      "liquidity": 12000000
+    },
+    {
+      "ticker": "CPI-24-EXTREME",
+      "event_ticker": "CPI-24",
+      "title": "Edge case market priced at the extreme",
+      "subtitle": "Yes at 100 cents",
+      "status": "open",
+      "yes_bid": 99,
+      "yes_ask": 100,
+      "no_bid": 0,
+      "no_ask": 1,
+      "last_price": 100,
+      "dollar_volume": 5000,
+      "liquidity": 100000
+    }
+  ]
+}

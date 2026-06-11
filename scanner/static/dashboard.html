@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>预测市场套利扫描器</title>
+  <style>
+    :root {
+      --bg:#0b0d12; --bg2:#11141c; --card:#161a24; --card2:#1c212e; --border:#262c3a;
+      --text:#e8ebf0; --muted:#8a90a0; --dim:#5b6273;
+      --green:#2ecc71; --green-bg:rgba(46,204,113,.12);
+      --red:#e74c3c; --red-bg:rgba(231,76,60,.12);
+      --blue:#5b8def; --blue-bg:rgba(91,141,239,.12);
+      --amber:#f0a500; --amber-bg:rgba(240,165,0,.12);
+      --purple:#a06bf0;
+    }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; font-size:14px; line-height:1.5; }
+    a { color:inherit; text-decoration:none; }
+    .wrap { max-width:1180px; margin:0 auto; padding:18px; }
+
+    /* Header */
+    header { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+    .brand { display:flex; align-items:center; gap:10px; }
+    .brand h1 { font-size:18px; font-weight:700; letter-spacing:.2px; }
+    .brand .beta { font-size:10px; font-weight:700; color:var(--blue); background:var(--blue-bg); padding:2px 6px; border-radius:5px; letter-spacing:.5px; }
+    .ctrls { display:flex; align-items:center; gap:10px; font-size:13px; color:var(--muted); }
+    .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+    .dot.ok{background:var(--green);} .dot.bad{background:var(--red);}
+    button { background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:7px; padding:6px 12px; cursor:pointer; font-size:13px; font-weight:500; transition:.15s; }
+    button:hover { border-color:var(--blue); }
+    button.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
+    button.danger:hover { border-color:var(--red); color:var(--red); }
+    button.sm { padding:3px 9px; font-size:12px; }
+
+    /* Stats bar */
+    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:1px; background:var(--border); border:1px solid var(--border); border-radius:12px; overflow:hidden; margin-bottom:14px; }
+    .stat { background:var(--card); padding:14px 16px; }
+    .stat .v { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }
+    .stat .l { font-size:12px; color:var(--muted); margin-top:2px; }
+    .stat .v.pos{color:var(--green);} .stat .v.accent{color:var(--blue);}
+
+    /* Disclaimer */
+    .disclaimer { background:var(--amber-bg); border:1px solid rgba(240,165,0,.3); border-radius:10px; padding:10px 14px; font-size:12.5px; color:#e8d9b0; line-height:1.6; margin-bottom:14px; }
+    .disclaimer b { color:var(--amber); }
+
+    /* Tabs */
+    .tabs { display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:16px; flex-wrap:wrap; }
+    .tab { padding:9px 16px; cursor:pointer; font-size:14px; color:var(--muted); border-bottom:2px solid transparent; font-weight:500; }
+    .tab:hover { color:var(--text); }
+    .tab.active { color:var(--text); border-bottom-color:var(--blue); }
+    .tab .badge { display:inline-block; min-width:18px; text-align:center; font-size:11px; background:var(--card2); color:var(--muted); border-radius:9px; padding:0 5px; margin-left:5px; }
+    .tab.active .badge { background:var(--blue); color:#fff; }
+    .panel { display:none; } .panel.active { display:block; }
+
+    /* Opportunity cards */
+    .opp-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:14px; }
+    .opp { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px; display:flex; flex-direction:column; gap:10px; }
+    .opp-top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+    .opp-title { font-size:14px; font-weight:600; line-height:1.4; }
+    .edge { text-align:right; flex-shrink:0; }
+    .edge .pct { font-size:22px; font-weight:800; font-variant-numeric:tabular-nums; }
+    .edge .pct.pos{color:var(--green);} .edge .pct.neg{color:var(--red);}
+    .edge .lbl { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+    .legs { display:flex; gap:8px; }
+    .leg { flex:1; background:var(--card2); border:1px solid var(--border); border-radius:9px; padding:9px 10px; }
+    .leg .plat { font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--muted); }
+    .leg .plat.polymarket{color:var(--blue);} .leg .plat.predictfun{color:var(--purple);} .leg .plat.kalshi{color:var(--amber);}
+    .leg .oc { font-size:13px; margin:3px 0; }
+    .leg .px { font-size:18px; font-weight:700; font-variant-numeric:tabular-nums; }
+    .leg .px .cent { font-size:12px; color:var(--muted); font-weight:500; }
+    .leg .vol { font-size:11px; color:var(--dim); margin-top:2px; }
+    .opp-foot { display:flex; justify-content:space-between; align-items:center; font-size:12px; color:var(--muted); }
+    .conf { font-weight:600; padding:2px 8px; border-radius:8px; font-size:11px; }
+    .conf.hi{background:var(--green-bg);color:var(--green);} .conf.mid{background:var(--amber-bg);color:var(--amber);} .conf.lo{background:var(--red-bg);color:var(--red);}
+    .directive { font-size:12.5px; font-weight:600; color:var(--green); background:var(--green-bg); border-radius:7px; padding:6px 10px; text-align:center; }
+    .verify { font-size:11px; color:var(--amber); }
+
+    /* Cards / tables */
+    .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:14px; }
+    .card h2 { font-size:14px; font-weight:600; margin-bottom:4px; display:flex; justify-content:space-between; align-items:center; }
+    .card .sub { font-size:12px; color:var(--muted); font-weight:400; margin-bottom:12px; line-height:1.6; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th,td { text-align:left; padding:8px 7px; border-bottom:1px solid var(--border); }
+    th { color:var(--muted); font-weight:500; font-size:12px; }
+    td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+    tr.clickable { cursor:pointer; } tr.clickable:hover td { background:var(--card2); }
+    .pos{color:var(--green);} .neg{color:var(--red);} .muted{color:var(--muted);} .err{color:var(--red);}
+    .pill { padding:2px 8px; border-radius:9px; font-size:11px; font-weight:600; }
+    .pill.open{background:var(--blue-bg);color:var(--blue);} .pill.sustained{background:var(--green-bg);color:var(--green);} .pill.closed{background:rgba(139,144,156,.15);color:var(--muted);}
+    .pill.cc{background:var(--green-bg);color:var(--green);} .pill.co{background:var(--red-bg);color:var(--red);} .pill.ch{background:var(--amber-bg);color:var(--amber);}
+    .cat { padding:1px 7px; border-radius:8px; font-size:11px; background:var(--blue-bg); color:var(--blue); }
+    .empty { color:var(--muted); padding:24px; text-align:center; font-size:13px; }
+    .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+    .toolbar .grow { flex:1; min-width:120px; }
+    input,select { background:var(--bg2); color:var(--text); border:1px solid var(--border); border-radius:7px; padding:6px 10px; font-size:13px; outline:none; }
+    input:focus,select:focus { border-color:var(--blue); }
+    .ob { display:flex; gap:24px; flex-wrap:wrap; font-size:12px; }
+    .ob .side { min-width:130px; } .ob .side h4 { font-size:12px; margin-bottom:4px; color:var(--muted); }
+    .ob .lvl { display:flex; justify-content:space-between; gap:12px; padding:1px 0; }
+    .fresh { font-size:12px; } .fresh.ok2{color:var(--green);} .fresh.warn{color:var(--amber);} .fresh.bad{color:var(--red);}
+    .metrics-row { display:flex; gap:18px; flex-wrap:wrap; }
+    .metric { min-width:90px; } .metric .v{font-size:20px;font-weight:700;} .metric .l{font-size:12px;color:var(--muted);}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>预测市场套利扫描器</h1><span class="beta">实时 · BETA</span>
+    </div>
+    <div class="ctrls">
+      <span id="status"><span class="dot bad"></span>连接中…</span>
+      <span id="updated" class="muted"></span>
+      <button id="connect-wallet">连接钱包</button>
+      <button id="refresh">刷新</button>
+    </div>
+  </header>
+
+  <div class="disclaimer">
+    <b>⚠️ 跨平台套利扫描（实验性）</b>：AI/算法匹配「同一事件」可能存在误差——价差可能源于
+    <b>不同条款、结算时机或流动性</b>，而非真实套利。下单前请务必<b>自行核对两个市场是否真的是同一事件</b>。
+    本系统默认 dry-run（模拟盘，不动真钱）。
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-tab="opps">套利机会<span class="badge" id="b-opps">0</span></div>
+    <div class="tab" data-tab="matches">跨平台匹配<span class="badge" id="b-matches">0</span></div>
+    <div class="tab" data-tab="markets">市场行情<span class="badge" id="b-markets">0</span></div>
+    <div class="tab" data-tab="signals">活跃信号<span class="badge" id="b-signals">0</span></div>
+    <div class="tab" data-tab="trade">交易<span class="badge" id="b-trade">0</span></div>
+    <div class="tab" data-tab="account">账户</div>
+    <div class="tab" data-tab="system">系统</div>
+  </div>
+
+  <!-- 套利机会 -->
+  <div class="panel active" id="panel-opps">
+    <div id="opps"></div>
+  </div>
+
+  <!-- 跨平台匹配 -->
+  <div class="panel" id="panel-matches">
+    <div class="toolbar">
+      <input id="grp-search" class="grow" placeholder="搜索事件…" />
+      <span class="muted">最低置信度</span>
+      <select id="grp-conf">
+        <option value="0">全部</option><option value="0.85">≥85%</option>
+        <option value="0.9">≥90%</option><option value="0.95">≥95%</option>
+      </select>
+    </div>
+    <div id="groups"></div>
+  </div>
+
+  <!-- 市场行情 -->
+  <div class="panel" id="panel-markets">
+    <div class="toolbar">
+      <input id="mkt-search" class="grow" placeholder="搜索市场…" />
+      <select id="mkt-platform"><option value="">全部平台</option></select>
+      <select id="mkt-category"><option value="">全部类目</option></select>
+      <select id="mkt-sort"><option value="volume_usd">按成交量</option><option value="liquidity_usd">按流动性</option><option value="title">按标题</option></select>
+      <button id="mkt-dir" data-dir="desc" class="sm">降序 ↓</button>
+      <span class="muted" id="mkt-count"></span>
+    </div>
+    <div id="markets"></div>
+  </div>
+
+  <!-- 活跃信号 -->
+  <div class="panel" id="panel-signals">
+    <div class="card"><div class="sub">把瞬时机会升级为有状态信号并跟踪生命周期：OPEN 首次出现 / SUSTAINED 持续 / CLOSED 已消失。</div><div id="signals"></div></div>
+  </div>
+
+  <!-- 交易 -->
+  <div class="panel" id="panel-trade">
+    <div class="card">
+      <h2>交易计划 <span class="sub" id="pnl-summary" style="margin:0"></span></h2>
+      <div class="sub">通过<b>风控</b>的机会生成待确认计划。当前默认 dry-run：确认走<b>模拟盘</b>真实建仓/核算收益，但<b>不动真钱</b>。「真实收益」列按实际成交价审计是否真赚。</div>
+      <div id="plans"></div>
+    </div>
+  </div>
+
+  <!-- 账户 -->
+  <div class="panel" id="panel-account">
+    <div class="card">
+      <h2>钱包 <span class="sub" style="margin:0">插件钱包 · 只读 · 私钥不离浏览器</span></h2>
+      <div id="wallet"></div>
+    </div>
+    <div class="card">
+      <h2>账户与持仓 <span class="sub" id="exposure-summary" style="margin:0"></span></h2>
+      <div class="sub">当前为<b>模拟盘</b>账户（非真实资金）；配置 RPC + 钱包地址后顶部显示真实链上余额。</div>
+      <div id="account"></div>
+    </div>
+  </div>
+
+  <!-- 系统 -->
+  <div class="panel" id="panel-system">
+    <div class="card">
+      <h2>运行指标</h2>
+      <div class="metrics-row" id="metrics"></div>
+    </div>
+    <div class="card">
+      <h2>平台健康 <span class="sub" style="margin:0">摄取 · 熔断 · 限流</span></h2>
+      <div id="adapters"></div>
+    </div>
+  </div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const pct = (x) => (x*100).toFixed(2)+'%';
+const pct1 = (x) => (x*100).toFixed(1)+'%';
+const cent = (p) => (p*100).toFixed(1);
+const fmtUsd = (x) => x==null ? '–' : '$'+Number(x).toLocaleString(undefined,{maximumFractionDigits:0});
+const esc = (s) => String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const CAT_LABEL = {politics:'政治',elections:'选举',sports:'体育',geopolitics:'地缘',economy:'经济',culture:'文化',crypto:'加密',tech:'科技',business:'商业',science:'科学'};
+const catLabel = (c)=> c?(CAT_LABEL[c]||c):'';
+
+const state = {
+  markets:[], opps:[], groups:[], health:null, metrics:null,
+  mktSearch:'', mktPlatform:'', mktCategory:'', mktSort:'volume_usd', mktDir:'desc',
+  grpSearch:'', grpConf:0,
+};
+
+async function getJSON(p){ const r=await fetch(p); if(!r.ok) throw new Error(p+' -> '+r.status); return r.json(); }
+function sortBy(arr,key,dir){ const s=dir==='asc'?1:-1; return [...arr].sort((a,b)=>{const va=a[key],vb=b[key]; if(va==null&&vb==null)return 0; if(va==null)return 1; if(vb==null)return -1; if(typeof va==='string')return s*va.localeCompare(vb); return s*(va-vb);}); }
+function ago(iso){ if(!iso)return '–'; const sec=Math.max(0,(Date.now()-new Date(iso).getTime())/1000); if(sec<60)return sec.toFixed(0)+'秒前'; if(sec<3600)return (sec/60).toFixed(0)+'分钟前'; return (sec/3600).toFixed(1)+'小时前'; }
+function freshnessLabel(s){ if(s==null)return ''; if(s<=45)return `<span class="fresh ok2">● 实时（${s.toFixed(0)}秒前）</span>`; if(s<=120)return `<span class="fresh warn">● 稍旧（${s.toFixed(0)}秒前）</span>`; return `<span class="fresh bad">● 过期（${s.toFixed(0)}秒前）</span>`; }
+function confClass(c){ return c>=0.95?'hi':(c>=0.85?'mid':'lo'); }
+function marketByLeg(leg){ return state.markets.find(m=>m.platform===leg.platform && m.market_id===leg.market_id); }
+function groupConf(gid){ const g=state.groups.find(x=>x.group_id===gid); return g?g.match_confidence:null; }
+function groupByGid(gid){ return state.groups.find(x=>x.group_id===gid); }
+// 计算一个匹配组各平台的隐含 P(YES)，用于背离检测。
+function impliedYesProbs(group){
+  if(!group) return [];
+  const out=[];
+  for(const m of group.members){
+    const yes=m.outcomes.find(o=>o.name.toUpperCase()==='YES');
+    if(yes) out.push({platform:m.platform, p:yes.price});
+  }
+  return out;
+}
+
+// 极简 SVG 折线图
+function sparkline(values,caption){
+  const W=600,H=110,pad=20; const min=Math.min(...values),max=Math.max(...values); const range=(max-min)||1;
+  const stepX=(W-2*pad)/Math.max(1,values.length-1);
+  const pts=values.map((v,i)=>`${(pad+i*stepX).toFixed(1)},${(H-pad-((v-min)/range)*(H-2*pad)).toFixed(1)}`).join(' ');
+  const last=values[values.length-1];
+  return `<div class="muted" style="margin-bottom:4px">${caption} · 区间 ${pct(min)}~${pct(max)} · 最新 ${pct(last)}</div>
+    <svg width="100%" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="background:var(--bg2);border:1px solid var(--border);border-radius:6px"><polyline fill="none" stroke="#5b8def" stroke-width="2" points="${pts}"/></svg>`;
+}
+
+// ---- 顶部统计条 ----
+function renderStats(){
+  const opps=state.opps, groups=state.groups, markets=state.markets;
+  const maxEdge = opps.length ? Math.max(...opps.map(o=>o.net_profit_margin)) : 0;
+  const totalVol = markets.reduce((s,m)=>s+(m.volume_usd||0),0);
+  $('stats').innerHTML = `
+    <div class="stat"><div class="v">${markets.length}</div><div class="l">在监控市场</div></div>
+    <div class="stat"><div class="v">${groups.length}</div><div class="l">跨平台等价组</div></div>
+    <div class="stat"><div class="v accent">${opps.length}</div><div class="l">套利机会</div></div>
+    <div class="stat"><div class="v pos">${opps.length?pct1(maxEdge):'–'}</div><div class="l">最大净利润率</div></div>
+    <div class="stat"><div class="v">${fmtUsd(totalVol)}</div><div class="l">总成交量(可得)</div></div>`;
+  $('b-opps').textContent=opps.length; $('b-matches').textContent=groups.length;
+  $('b-markets').textContent=markets.length;
+}
+
+// ---- 套利机会卡（matchr 风格） ----
+function renderOpps(){
+  const opps=state.opps;
+  if(!opps.length){ $('opps').innerHTML='<div class="empty">当前无套利机会。真实跨平台套利罕见、且风控阈值严格——无机会属正常。</div>'; return; }
+  const sorted=[...opps].sort((a,b)=>b.net_profit_margin-a.net_profit_margin);
+  let html='<div class="opp-grid">';
+  for(const o of sorted){
+    const conf=groupConf(o.group_id);
+    const confHtml = conf!=null ? `<span class="conf ${confClass(conf)}">${(conf*100).toFixed(0)}% 匹配</span>` : '';
+    const legsHtml = o.legs.map(l=>{
+      const m=marketByLeg(l);
+      const vol=m?fmtUsd(m.volume_usd):'';
+      return `<div class="leg"><div class="plat ${esc(l.platform)}">${esc(l.platform)}</div>
+        <div class="oc">买 ${esc(l.outcome)}</div>
+        <div class="px">${cent(l.price)}<span class="cent">¢</span></div>
+        <div class="vol">${vol?('量 '+vol):''}</div></div>`;
+    }).join('');
+    const lowConf = conf!=null && conf<0.95;
+    const gid=encodeURIComponent(o.group_id);
+    // 可靠性分析：两平台隐含概率背离 + 可成交规模 + gas 提醒。
+    const probs=impliedYesProbs(groupByGid(o.group_id));
+    let reliab='';
+    if(probs.length>=2){
+      const ps=probs.map(x=>x.p); const diverge=Math.max(...ps)-Math.min(...ps);
+      const probStr=probs.map(x=>`${esc(x.platform)} ${pct1(x.p)}`).join(' vs ');
+      if(diverge>0.10){
+        reliab=`<div class="verify" style="background:var(--red-bg);border-radius:7px;padding:6px 10px;line-height:1.5">
+          ⚠️ 两平台隐含概率背离大：${probStr}。同一事件价格本应接近——差异大多意味着<b>数据/结算口径问题</b>，而非真套利。务必核对。</div>`;
+      } else {
+        reliab=`<div class="muted" style="font-size:11px">两平台隐含概率：${probStr}（接近，较可信）</div>`;
+      }
+    }
+    const sizeWarn = o.recommended_size_usd<100 ? ` <span class="verify">· 规模小，链上 gas 可能吃掉利润</span>` : '';
+    html+=`<div class="opp">
+      <div class="opp-top"><div class="opp-title">${esc(o.event_title)}</div>
+        <div class="edge"><div class="pct ${o.net_profit_margin>0?'pos':'neg'}">${pct1(o.net_profit_margin)}</div><div class="lbl">净利润率</div></div></div>
+      <div class="legs">${legsHtml}</div>
+      <div class="directive">两腿买入，可成交规模 ${fmtUsd(o.recommended_size_usd)}${sizeWarn}</div>
+      ${reliab}
+      <div class="opp-foot">
+        <span>${confHtml} ${lowConf?'<span class="verify">· 务必核对是否同一事件</span>':''}</span>
+        <span class="opp-chart-toggle" data-gid="${gid}" style="cursor:pointer;color:var(--blue)">走势 ▸</span>
+      </div>
+      <div class="opp-chart" data-chart="${gid}" style="display:none"></div>
+    </div>`;
+  }
+  html+='</div>';
+  $('opps').innerHTML=html;
+  document.querySelectorAll('.opp-chart-toggle').forEach(el=>el.addEventListener('click',()=>toggleOppChart(el.dataset.gid)));
+}
+async function toggleOppChart(gid){
+  const box=document.querySelector(`.opp-chart[data-chart="${gid}"]`); if(!box)return;
+  if(box.style.display!=='none'){ box.style.display='none'; return; }
+  box.style.display=''; box.innerHTML='<span class="muted">加载走势…</span>';
+  try{ const pts=await getJSON(`/opportunities/${gid}/history?limit=200`);
+    box.innerHTML = pts.length>=2 ? sparkline(pts.map(p=>p.value),'净利润率走势') : '<span class="muted">历史不足（需累积多周期）</span>';
+  }catch(e){ box.innerHTML='<span class="err">加载失败</span>'; }
+}
+
+
+// ---- 跨平台匹配 ----
+function renderGroups(){
+  const all=state.groups; const q=state.grpSearch.trim().toLowerCase();
+  let groups=all.filter(g=>g.match_confidence>=state.grpConf);
+  if(q) groups=groups.filter(g=>(g.members[0]?.title??'').toLowerCase().includes(q));
+  if(!groups.length){ $('groups').innerHTML=`<div class="empty">${all.length?'无匹配的组':'当前无匹配组'}</div>`; return; }
+  let rows='';
+  groups.forEach((g,i)=>{
+    const title=g.members[0]?.title??g.group_id;
+    const plats=g.members.map(m=>m.platform).join(' × ');
+    const c=g.match_confidence;
+    rows+=`<tr class="clickable" data-grp="${i}"><td>${esc(title)}</td><td class="muted">${esc(plats)}</td>
+      <td class="num"><span class="conf ${confClass(c)}">${(c*100).toFixed(0)}%</span></td></tr>
+      <tr class="grp-detail" data-detail="${i}" style="display:none"><td colspan="3">${groupDetailHtml(g)}</td></tr>`;
+  });
+  $('groups').innerHTML=`<div class="card" style="margin:0;padding:0"><table><thead><tr><th>事件（点击看双平台价差）</th><th>平台</th><th class="num">匹配置信度</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  document.querySelectorAll('[data-grp]').forEach(r=>r.addEventListener('click',()=>{const d=document.querySelector(`.grp-detail[data-detail="${r.dataset.grp}"]`); if(d)d.style.display=d.style.display==='none'?'':'none';}));
+}
+function groupDetailHtml(g){
+  const px=o=>o?cent(o.price):'–', ask=o=>(o&&o.ask!=null)?cent(o.ask):'–';
+  let body='', minYes=Infinity, minNo=Infinity;
+  for(const m of g.members){
+    const yes=m.outcomes.find(o=>o.name.toUpperCase()==='YES'), no=m.outcomes.find(o=>o.name.toUpperCase()==='NO');
+    if(yes&&yes.ask!=null) minYes=Math.min(minYes,yes.ask);
+    if(no&&no.ask!=null) minNo=Math.min(minNo,no.ask);
+    body+=`<tr><td>${esc(m.platform)}</td><td>${esc(m.title.slice(0,40))}</td><td class="num">${px(yes)}¢</td><td class="num">${ask(yes)}¢</td><td class="num">${px(no)}¢</td><td class="num">${ask(no)}¢</td></tr>`;
+  }
+  let summary='';
+  if(minYes<Infinity&&minNo<Infinity){ const cost=minYes+minNo, edge=1-cost; const cls=edge>0?'pos':'neg';
+    summary=`<div class="muted" style="margin-bottom:6px">买最便宜 YES(${cent(minYes)}¢)+最便宜 NO(${cent(minNo)}¢)=<b>${cent(cost)}¢</b> · 毛价差 <span class="${cls}">${pct(edge)}</span> <span class="muted">（未计费用；净套利以「套利机会」为准）</span></div>`; }
+  return summary+`<table style="margin:0"><thead><tr><th>平台</th><th>市场标题</th><th class="num">YES价</th><th class="num">YESask</th><th class="num">NO价</th><th class="num">NOask</th></tr></thead><tbody>${body}</tbody></table>`;
+}
+
+// ---- 市场行情 ----
+function renderMarkets(){
+  const all=state.markets;
+  const platforms=[...new Set(all.map(m=>m.platform))].sort();
+  const sel=$('mkt-platform'),cur=sel.value;
+  sel.innerHTML='<option value="">全部平台</option>'+platforms.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join(''); sel.value=cur;
+  const cats=[...new Set(all.map(m=>m.category).filter(Boolean))].sort();
+  const cs=$('mkt-category'),cc=cs.value;
+  cs.innerHTML='<option value="">全部类目</option>'+cats.map(c=>`<option value="${esc(c)}">${esc(catLabel(c))}</option>`).join(''); cs.value=cc;
+  const q=state.mktSearch.trim().toLowerCase();
+  let mk=all;
+  if(state.mktPlatform) mk=mk.filter(m=>m.platform===state.mktPlatform);
+  if(state.mktCategory) mk=mk.filter(m=>m.category===state.mktCategory);
+  if(q) mk=mk.filter(m=>m.title.toLowerCase().includes(q)||m.market_id.toLowerCase().includes(q));
+  mk=sortBy(mk,state.mktSort,state.mktDir);
+  $('mkt-count').innerHTML=`显示 ${Math.min(mk.length,100)}/${mk.length} · `+freshnessLabel(all.length?Math.max(...all.map(m=>m.data_age_seconds||0)):null);
+  const shown=mk.slice(0,100);
+  if(!shown.length){ $('markets').innerHTML='<div class="empty">无匹配市场</div>'; return; }
+  let rows='';
+  for(const m of shown){
+    const yes=m.outcomes.find(o=>o.name.toUpperCase()==='YES')||m.outcomes[0];
+    const key=encodeURIComponent(m.platform)+'/'+encodeURIComponent(m.market_id);
+    const ct=m.category?`<span class="cat">${esc(catLabel(m.category))}</span>`:'';
+    rows+=`<tr class="clickable mkt-row" data-key="${key}"><td>${esc(m.title)} ${ct}</td><td class="muted">${esc(m.platform)}</td>
+      <td class="num">${yes?cent(yes.price)+'¢':'–'}</td><td class="num">${fmtUsd(m.volume_usd)}</td><td class="num">${fmtUsd(m.liquidity_usd)}</td><td class="num muted">${m.data_age_seconds?.toFixed?.(0)??'–'}s</td></tr>
+      <tr class="mkt-detail" data-detail="${key}" style="display:none"><td colspan="6"><div class="ob-box muted">点击加载…</div></td></tr>`;
+  }
+  $('markets').innerHTML=`<div class="card" style="margin:0;padding:0"><table><thead><tr><th>标题</th><th>平台</th><th class="num">YES价</th><th class="num">成交量</th><th class="num">流动性</th><th class="num">年龄</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  document.querySelectorAll('.mkt-row').forEach(r=>r.addEventListener('click',()=>toggleMarketDetail(r.dataset.key)));
+}
+async function toggleMarketDetail(key){
+  const d=document.querySelector(`.mkt-detail[data-detail="${key}"]`); if(!d)return;
+  if(d.style.display!=='none'){ d.style.display='none'; return; }
+  d.style.display=''; const box=d.querySelector('.ob-box');
+  try{
+    const m=await getJSON('/markets/'+key);
+    let h='<div class="ob">';
+    for(const o of m.outcomes){ h+=`<div class="side"><h4>${esc(o.name)}</h4>
+      <div class="lvl"><span>买价</span><span>${o.bid!=null?cent(o.bid)+'¢':'–'}</span></div>
+      <div class="lvl"><span>卖价</span><span>${o.ask!=null?cent(o.ask)+'¢':'–'}</span></div>
+      <div class="lvl"><span>价格</span><span>${cent(o.price)}¢</span></div>
+      <div class="lvl"><span>流动性</span><span>${fmtUsd(o.available_liquidity_usd)}</span></div></div>`; }
+    h+='</div>';
+    h+=`<div class="muted" style="margin-top:8px">费率 ${m.fee_rate!=null?(m.fee_rate*100).toFixed(2)+'%':'–'} · 成交量 ${fmtUsd(m.volume_usd)} · 流动性 ${fmtUsd(m.liquidity_usd)}</div>`;
+    h+='<div class="mkt-chart muted" style="margin-top:8px">加载价格走势…</div>';
+    box.innerHTML=h;
+    try{ const pts=await getJSON('/markets/'+key+'/history?limit=200');
+      box.querySelector('.mkt-chart').innerHTML = pts.length>=2?sparkline(pts.map(p=>p.value),'YES 价走势'):'<span class="muted">价格历史不足</span>';
+    }catch(e){}
+  }catch(e){ box.innerHTML='<span class="err">加载失败</span>'; }
+}
+
+// ---- 信号 ----
+function renderSignals(sigs){
+  $('b-signals').textContent=sigs.length;
+  if(!sigs.length){ $('signals').innerHTML='<div class="empty">当前无活跃信号</div>'; return; }
+  let rows='';
+  for(const s of sigs) rows+=`<tr><td>${esc(s.event_title)}</td><td><span class="pill ${s.status}">${s.status}</span></td>
+    <td class="num pos">${pct(s.net_profit_margin)}</td><td class="num">${pct(s.peak_net_profit_margin)}</td><td class="num muted">${s.duration_seconds?.toFixed?.(0)??'–'}s</td></tr>`;
+  $('signals').innerHTML=`<table><thead><tr><th>事件</th><th>状态</th><th class="num">净利润率</th><th class="num">峰值</th><th class="num">持续</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// ---- 交易计划 ----
+const PLAN_LABEL={pending_confirmation:'待确认',confirmed:'已确认',rejected:'已拒绝',executing:'执行中',completed:'已完成',failed:'失败'};
+function renderPlans(plans){
+  $('b-trade').textContent=plans.filter(p=>p.status==='pending_confirmation').length;
+  if(!plans.length){ $('plans').innerHTML='<div class="empty">当前无交易计划（合格机会通过风控后在此生成待确认计划）</div>'; return; }
+  const order={pending_confirmation:0,confirmed:1,executing:2,completed:3,failed:4,rejected:5};
+  const sorted=[...plans].sort((a,b)=>(order[a.status]??9)-(order[b.status]??9));
+  let rows='';
+  for(const p of sorted){
+    const legs=p.legs.map(l=>`${esc(l.platform)} 买 ${esc(l.outcome)} ${l.quantity.toFixed(0)}@${cent(l.target_price)}¢`).join(' ＋ ');
+    const pending=p.status==='pending_confirmation';
+    const actions=pending?`<button class="sm primary" data-confirm="${esc(p.plan_id)}">确认</button> <button class="sm danger" data-reject="${esc(p.plan_id)}">拒绝</button> <button class="sm" data-preview="${esc(p.plan_id)}">预览</button>`:'<span class="muted">—</span>';
+    let pnl='<span class="muted">—</span>';
+    if(p.realized_profit_usd!=null){ const g=p.genuinely_profitable; pnl=`<span class="${g?'pos':'neg'}">${g?'✓ 真盈利':'✗ 实亏'} ${fmtUsd(p.realized_profit_usd)}</span>`; }
+    rows+=`<tr><td>${esc(p.event_title)}</td><td><span class="pill ${p.status==='completed'?'sustained':(pending?'open':'closed')}">${PLAN_LABEL[p.status]||p.status}</span></td>
+      <td class="num pos">${pct(p.expected_net_profit_margin)}</td><td class="num">${fmtUsd(p.size_usd)}</td><td>${pnl}</td><td class="muted" style="font-size:12px">${legs}</td><td>${actions}</td></tr>`;
+  }
+  $('plans').innerHTML=`<table><thead><tr><th>事件</th><th>状态</th><th class="num">检测利润率</th><th class="num">规模</th><th>真实收益</th><th>双腿</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+  document.querySelectorAll('[data-confirm]').forEach(b=>b.addEventListener('click',()=>actOnPlan(b.dataset.confirm,'confirm')));
+  document.querySelectorAll('[data-reject]').forEach(b=>b.addEventListener('click',()=>actOnPlan(b.dataset.reject,'reject')));
+  document.querySelectorAll('[data-preview]').forEach(b=>b.addEventListener('click',()=>previewOrder(b.dataset.preview)));
+}
+async function actOnPlan(id,action){
+  const verb=action==='confirm'?'确认':'拒绝';
+  if(!confirm(`${verb}该交易计划？（dry-run 模拟盘，不动真钱）`))return;
+  try{ const r=await fetch(`/trade/plans/${encodeURIComponent(id)}/${action}`,{method:'POST'}); if(!r.ok)throw new Error('HTTP '+r.status); await refresh(); }
+  catch(e){ alert(verb+'失败：'+e.message); }
+}
+async function previewOrder(id){
+  let p; try{ p=await getJSON('/trade/plans/'+encodeURIComponent(id)); }catch(e){ alert('加载失败'); return; }
+  const legs=p.legs.map((l,i)=>`  腿${i+1}: 在 ${l.platform} 买 ${l.outcome} ${l.quantity.toFixed(2)} 份 @ ${cent(l.target_price)}¢`).join('\n');
+  alert(`【订单预览 · 不会提交】\n事件：${p.event_title}\n规模 ${fmtUsd(p.size_usd)}\n\n${legs}\n\n真实下单时由你的插件钱包 EIP-712 签名提交，私钥不离浏览器。`);
+}
+
+// ---- 账户 ----
+async function renderAccount(){
+  try{
+    const [bal,pos,exp,onchain]=await Promise.all([getJSON('/trade/balance'),getJSON('/trade/positions'),getJSON('/trade/exposure'),getJSON('/trade/onchain-balance').catch(()=>({}))]);
+    let html='';
+    const ock=Object.keys(onchain||{});
+    if(ock.length){ let r=ock.map(p=>{const v=onchain[p]; const c=v.error?`<span class="err">${esc(v.error)}</span>`:`${v.balance.toFixed(2)} ${esc(v.asset||'')}`; return `<tr><td>${esc(p)} <span class="muted" style="font-size:11px">${esc(v.address||'')}</span></td><td class="num">${c}</td></tr>`;}).join('');
+      html+=`<div class="muted" style="font-size:12px;margin-bottom:4px">真实链上余额（只读）</div><table style="margin-bottom:12px"><thead><tr><th>平台（真实账户）</th><th class="num">链上余额</th></tr></thead><tbody>${r}</tbody></table>`; }
+    const plats=Object.keys(bal);
+    if(plats.length){ let r=plats.map(p=>{const v=bal[p]; const c=v.error?`<span class="err">${esc(v.error)}</span>`:fmtUsd(v.balance_usd); return `<tr><td>${esc(p)}</td><td class="num">${c}</td></tr>`;}).join('');
+      html+=`<table style="margin-bottom:12px"><thead><tr><th>平台（模拟盘）</th><th class="num">可用余额</th></tr></thead><tbody>${r}</tbody></table>`; }
+    else html+='<div class="empty">未配置交易服务</div>';
+    $('exposure-summary').textContent = (exp&&exp.total_exposure_usd!=null)?('已占用敞口 '+fmtUsd(exp.total_exposure_usd)):'';
+    if(pos&&pos.length){ let r=pos.map(p=>`<tr><td>${esc(p.platform)}</td><td>${esc(p.market_id.slice(0,24))}</td><td>${esc(p.outcome)}</td><td class="num">${p.quantity.toFixed(2)}</td><td class="num">${cent(p.avg_price)}¢</td></tr>`).join('');
+      html+=`<table><thead><tr><th>平台</th><th>市场</th><th>结果</th><th class="num">数量</th><th class="num">均价</th></tr></thead><tbody>${r}</tbody></table>`; }
+    else html+='<div class="muted" style="font-size:12px">当前无持仓（确认计划后模拟盘建仓显示）</div>';
+    $('account').innerHTML=html;
+  }catch(e){ $('account').innerHTML='<div class="muted">账户信息不可用</div>'; }
+}
+
+// ---- 系统：指标 + 平台健康 ----
+function renderMetrics(m){
+  state.metrics=m;
+  $('metrics').innerHTML=`
+    <div class="metric"><div class="v">${m.cycles_total??'–'}</div><div class="l">检测周期</div></div>
+    <div class="metric"><div class="v">${m.signals_opened_total??'–'}</div><div class="l">累计开启信号</div></div>
+    <div class="metric"><div class="v">${m.signals_closed_total??'–'}</div><div class="l">累计关闭信号</div></div>
+    <div class="metric"><div class="v">${m.alerts_fired_total??'–'}</div><div class="l">累计告警</div></div>
+    <div class="metric"><div class="v">${(m.last_cycle_duration_seconds!=null&&m.last_cycle_duration_seconds>0)?m.last_cycle_duration_seconds.toFixed(2)+'s':'–'}</div><div class="l">最近周期耗时</div></div>
+    <div class="metric"><div class="v">${m.last_cycle_at?ago(m.last_cycle_at):'–'}</div><div class="l">最近周期</div></div>`;
+}
+function renderHealth(h){
+  state.health=h;
+  const ok=h.status==='ok';
+  $('status').innerHTML=`<span class="dot ${ok?'ok':'bad'}"></span>服务${ok?'正常':'降级'}`;
+  if(!h.adapters||!h.adapters.length){ $('adapters').innerHTML='<div class="empty">无适配器</div>'; return; }
+  let rows='';
+  for(const a of h.adapters){
+    const cs=a.circuit_state; const csp=cs?`<span class="pill ${cs==='closed'?'cc':(cs==='open'?'co':'ch')}">${cs==='closed'?'正常':(cs==='open'?'熔断':'半开')}</span>`:'–';
+    const fc=a.failure_count; const fcls=(fc!=null&&fc>0)?'neg':'muted';
+    rows+=`<tr><td><span class="dot ${a.healthy?'ok':'bad'}"></span>${esc(a.name||a.platform)}</td><td class="num">${a.market_count}</td><td>${csp}</td>
+      <td class="num"><span class="pos">${a.success_count??'–'}</span>/<span class="${fcls}">${fc??'–'}</span></td><td class="muted">${ago(a.last_successful_cycle)}</td><td>${a.last_error?`<span class="err">${esc(a.last_error)}</span>`:'<span class="muted">无</span>'}</td></tr>`;
+  }
+  $('adapters').innerHTML=`<table><thead><tr><th>平台</th><th class="num">市场</th><th>熔断</th><th class="num">成功/失败</th><th>最近成功</th><th>最近错误</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// ---- 钱包（EIP-1193，只读） ----
+const CHAINS={'0x38':{name:'BNB Chain',symbol:'BNB',platform:'predict.fun'},'0x89':{name:'Polygon',symbol:'POL',platform:'Polymarket'}};
+const wallet={connected:false,address:null,chainId:null,balance:null};
+function hasProvider(){ return typeof window.ethereum!=='undefined'; }
+async function connectWallet(){
+  if(!hasProvider()){ alert('未检测到插件钱包。请安装 MetaMask 等。'); return; }
+  try{
+    const acc=await window.ethereum.request({method:'eth_requestAccounts'});
+    wallet.address=acc[0]; wallet.connected=true;
+    wallet.chainId=await window.ethereum.request({method:'eth_chainId'});
+    await refreshWalletBalance();
+    if(!window.ethereum._b){ window.ethereum.on('accountsChanged',a=>{wallet.address=a[0]||null;wallet.connected=!!wallet.address;refreshWalletBalance().then(renderWallet);}); window.ethereum.on('chainChanged',c=>{wallet.chainId=c;refreshWalletBalance().then(renderWallet);}); window.ethereum._b=true; }
+    renderWallet();
+  }catch(e){ alert('连接失败：'+(e.message||e)); }
+}
+async function refreshWalletBalance(){
+  if(!wallet.connected){ wallet.balance=null; return; }
+  try{ const wei=await window.ethereum.request({method:'eth_getBalance',params:[wallet.address,'latest']}); wallet.balance=Number(BigInt(wei))/1e18; }catch(e){ wallet.balance=null; }
+}
+async function switchChain(id){ try{ await window.ethereum.request({method:'wallet_switchEthereumChain',params:[{chainId:id}]}); }catch(e){ alert('切换失败：'+(e.message||e)); } }
+function shortAddr(a){ return a?a.slice(0,6)+'…'+a.slice(-4):'–'; }
+function renderWallet(){
+  const box=$('wallet');
+  if(!hasProvider()){ box.innerHTML='<div class="muted">未检测到插件钱包。安装 MetaMask 后点右上「连接钱包」。</div>'; $('connect-wallet').textContent='安装钱包'; return; }
+  if(!wallet.connected){ box.innerHTML='<div class="muted">未连接。点右上「连接钱包」只读查看地址与余额（不发起任何交易）。</div>'; $('connect-wallet').textContent='连接钱包'; return; }
+  $('connect-wallet').textContent=shortAddr(wallet.address);
+  const ch=CHAINS[wallet.chainId]; const cn=ch?`${ch.name}（${ch.platform}）`:`未知链 ${wallet.chainId}`;
+  const bal=wallet.balance!=null?`${wallet.balance.toFixed(4)} ${ch?ch.symbol:''}`:'–';
+  box.innerHTML=`<table style="margin-bottom:10px"><tbody>
+    <tr><td class="muted">地址</td><td>${esc(wallet.address)}</td></tr>
+    <tr><td class="muted">网络</td><td>${esc(cn)}</td></tr>
+    <tr><td class="muted">原生余额</td><td>${esc(bal)}</td></tr></tbody></table>
+    <div class="toolbar"><span class="muted">切换网络</span><button class="sm" data-chain="0x38">BNB Chain</button><button class="sm" data-chain="0x89">Polygon</button><button class="sm" id="wallet-refresh">刷新余额</button></div>
+    <div class="muted" style="font-size:11px;margin-top:6px">⚠️ 仅只读。真实下单需先完成风控与真实执行适配器，届时由钱包 EIP-712 签名，私钥不离浏览器。</div>`;
+  box.querySelectorAll('[data-chain]').forEach(b=>b.addEventListener('click',()=>switchChain(b.dataset.chain)));
+  const wr=$('wallet-refresh'); if(wr)wr.addEventListener('click',()=>refreshWalletBalance().then(renderWallet));
+}
+
+// ---- 刷新主循环 ----
+async function refresh(){
+  try{
+    const [h,m,opps,sigs,groups,markets]=await Promise.all([getJSON('/health'),getJSON('/metrics'),getJSON('/opportunities'),getJSON('/signals'),getJSON('/groups'),getJSON('/markets')]);
+    state.opps=opps; state.groups=groups; state.markets=markets;
+    renderHealth(h); renderMetrics(m); renderStats();
+    renderOpps(); renderGroups(); renderMarkets(); renderSignals(sigs);
+    try{ renderPlans(await getJSON('/trade/plans')); }catch(e){ renderPlans([]); }
+    try{ const pnl=await getJSON('/trade/pnl'); if(pnl&&pnl.executed_trades>0){ const cls=pnl.total_realized_profit_usd>=0?'pos':'neg'; $('pnl-summary').innerHTML=`· 已执行 ${pnl.executed_trades} · 真盈利 ${pnl.profitable_trades}/亏损 ${pnl.losing_trades} · 累计 <span class="${cls}">${fmtUsd(pnl.total_realized_profit_usd)}</span>`; } else $('pnl-summary').textContent=''; }catch(e){}
+    renderAccount();
+    $('updated').textContent='更新于 '+new Date().toLocaleTimeString();
+  }catch(e){ $('status').innerHTML='<span class="dot bad"></span>连接失败'; $('updated').innerHTML=`<span class="err">${e.message}</span>`; }
+}
+
+// ---- 标签页 ----
+function bindTabs(){
+  document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active'); $('panel-'+t.dataset.tab).classList.add('active');
+  }));
+}
+function bindToolbars(){
+  $('mkt-search').addEventListener('input',e=>{state.mktSearch=e.target.value;renderMarkets();});
+  $('mkt-platform').addEventListener('change',e=>{state.mktPlatform=e.target.value;renderMarkets();});
+  $('mkt-category').addEventListener('change',e=>{state.mktCategory=e.target.value;renderMarkets();});
+  $('mkt-sort').addEventListener('change',e=>{state.mktSort=e.target.value;renderMarkets();});
+  $('mkt-dir').addEventListener('click',e=>{state.mktDir=state.mktDir==='desc'?'asc':'desc';e.target.textContent=state.mktDir==='desc'?'降序 ↓':'升序 ↑';renderMarkets();});
+  $('grp-search').addEventListener('input',e=>{state.grpSearch=e.target.value;renderGroups();});
+  $('grp-conf').addEventListener('change',e=>{state.grpConf=parseFloat(e.target.value);renderGroups();});
+}
+
+$('refresh').addEventListener('click',refresh);
+$('connect-wallet').addEventListener('click',connectWallet);
+bindTabs(); bindToolbars(); renderWallet(); refresh();
+setInterval(refresh,10000);
+</script>
+</body>
+</html>

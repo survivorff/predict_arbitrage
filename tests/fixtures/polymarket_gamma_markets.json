@@ -1,0 +1,28 @@
+[
+  {
+    "id": "0x1234",
+    "conditionId": "0xcond-election-2024",
+    "slug": "will-candidate-a-win",
+    "question": "Will Candidate A win the 2024 election?",
+    "active": true,
+    "closed": false,
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.62\", \"0.38\"]",
+    "clobTokenIds": "[\"100001\", \"100002\"]",
+    "volumeNum": 1543210.5,
+    "liquidityNum": 84500.0
+  },
+  {
+    "id": "0x5678",
+    "conditionId": "0xcond-rates-hike",
+    "slug": "fed-rate-hike-march",
+    "question": "Will the Fed hike rates in March?",
+    "active": true,
+    "closed": false,
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.15\", \"0.85\"]",
+    "clobTokenIds": "[\"200001\", \"200002\"]",
+    "volumeNum": 92000.0,
+    "liquidityNum": 12000.0
+  }
+]

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prediction-market-arbitrage-scanner"
+version = "0.1.0"
+description = "Cross-platform prediction market arbitrage scanner"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "httpx",
+    "websockets",
+    "fastapi",
+    "uvicorn",
+    "pydantic>=2",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "respx",
+]
+
+[tool.setuptools.packages.find]
+include = ["scanner*"]
+
+[tool.setuptools.package-data]
+scanner = ["static/*.html"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,146 @@
+# Sample configuration for the Prediction Market Arbitrage Scanner.
+#
+# This is the file loaded by default when running `uvicorn scanner.app:app`
+# (override the path with the SCANNER_CONFIG environment variable). It is parsed
+# and validated by `scanner.config.load_config`.
+
+scanner:
+  # How often each enabled adapter re-fetches market data, in seconds (<=60).
+  refresh_interval_seconds: 30
+  # Per-adapter fetch timeout; a slow platform is isolated and others continue.
+  fetch_timeout_seconds: 30
+  # Markets older than this are flagged stale and excluded from arbitrage
+  # detection. Default is 60s (Req 8.3); set your own value to override (Req 8.4).
+  staleness_threshold_seconds: 60
+  # Minimum match confidence required before a cross-platform group is eligible
+  # for arbitrage evaluation. Also used as the MatchingEngine score_threshold.
+  # Set to 0.85: high enough to reject loosely-related markets that share many
+  # title words but are different events (e.g. "win the World Cup" vs "win Group
+  # H in the World Cup" scored ~0.73), while keeping genuinely-equivalent markets
+  # (which score ~0.9+). Lower it only if you accept more false matches.
+  match_confidence_min: 0.85
+  # Signal persistence path (Phase Two, slice B). Omit/leave empty to use the
+  # in-memory store (lost on restart); set a file path to enable SQLite
+  # persistence so signals and their event stream survive restarts and are auditable.
+  signal_store_path: signals.db
+  # Data ingestion resilience (Phase Two, slice C). Each adapter is wrapped with
+  # rate limiting, exponential-backoff retry, and a circuit breaker.
+  adapter_min_interval_seconds: 0.0     # min interval between platform requests (0 = no limit)
+  adapter_max_attempts: 3               # max attempts per operation (incl. first)
+  adapter_backoff_base_seconds: 0.5     # exponential backoff base
+  circuit_failure_threshold: 5          # consecutive failures before tripping the breaker
+  circuit_reset_timeout_seconds: 30.0   # cooldown before a half-open probe
+  # Observability and signal quality (Phase Two, slice D).
+  json_logging: false                   # emit single-line JSON logs for centralized collection
+  similarity_backend: lexical           # match similarity backend: "lexical" or "normalizing" (synonym/abbreviation aware)
+  # Market/opportunity history time-series (Phase 3, slice K). Omit/empty to
+  # disable; set a file path to record per-cycle net-margin and YES-price series
+  # for the dashboard trend charts and signal review.
+  history_store_path: history.db
+  history_retention_days: 7.0
+  # Arbitrage data-reliability / executability gates (real-data driven, anti-fake).
+  # max_implied_prob_divergence: skip an "arbitrage" when the two platforms' implied
+  #   P(YES) for the same event diverge by more than this (absolute probability gap).
+  #   Large gap = one side's book is thin/stale or resolution differs — not a real arb
+  #   (e.g. Fed cuts: Polymarket 0.4% vs predictfun 17.6%). 0.10 = 10 percentage points.
+  # min_recommended_size_usd: skip opportunities whose executable size (capped by the
+  #   thinnest leg's liquidity) is below this — tiny size means gas eats the profit.
+  max_implied_prob_divergence: 0.10
+  min_recommended_size_usd: 20.0
+  # Trade plan/order persistence (Phase 3, slice H). Omit/empty for in-memory
+  # (lost on restart); set a file path for SQLite so plans/orders survive
+  # restarts and are auditable.
+  trade_store_path: trades.db
+  # Trade (write) API auth (Phase 3, slice H). Name an environment variable whose
+  # value becomes the required X-API-Key for all /trade/* endpoints. Unset = trade
+  # endpoints are unauthenticated (local self-use). Enable before real trading.
+  # The key is only read from the env var, never written to config/logs/responses.
+  # trade_api_key_env: SCANNER_TRADE_API_KEY
+  # On-chain read-only balance (Phase 3, slice I step 1). Set a Polygon JSON-RPC
+  # endpoint; combined with a platform's options.wallet_address it reads your REAL
+  # USDC balance read-only (no private key needed). Unset = paper balances only.
+  # polygon_rpc_url: https://polygon-bor-rpc.publicnode.com
+
+platforms:
+  # Polymarket reads public Gamma + CLOB APIs and needs no API key.
+  - name: polymarket
+    enabled: true
+    fee_model:
+      type: flat
+      rate: 0.0
+    options:
+      # Gamma 默认每页仅 ~20 条；用分页按成交量降序拉取更多活跃市场，
+      # 与 predict.fun 产生更多跨平台匹配。max_markets 控制 CLOB 订单簿读取规模。
+      page_size: 100
+      max_markets: 200
+      # 你的 Polygon 钱包地址（公开信息）。配合 scanner.polygon_rpc_url 可只读查询
+      # 真实 USDC 余额（无需私钥）。留空则只显示模拟盘余额。
+      # wallet_address: "0xYOUR_POLYGON_ADDRESS"
+      # 按类目优先抓取最火热市场（数据驱动：按真实成交量排序）。逐类目按量降序、
+      # 在 max_markets 内分配预算。可选值见 scanner/adapters/polymarket.py 的
+      # CATEGORY_TAG_IDS。留空/删除则按全站成交量降序翻页。
+      categories:
+        - politics      # 政治（成交量最高，~$2.6B）
+        - elections     # 选举（~$2.4B）
+        - sports        # 体育（~$2.0B）
+        - geopolitics   # 地缘政治（~$534M）
+        - economy       # 经济
+        - crypto        # 加密
+  # predict.fun is an on-chain prediction market on BNB Chain (off-chain CLOB +
+  # on-chain settlement, binary YES/NO, prices already 0-1). Read-only market
+  # data here.
+  #
+  # IMPORTANT: the PRODUCTION API (https://api.predict.fun) REQUIRES an API key
+  # (returns 401 without one). To use production, obtain a key, set it in env as
+  # PREDICTFUN_API_KEY, and add `api_key_env: PREDICTFUN_API_KEY` below.
+  # The TESTNET API (https://api-testnet.predict.fun) is readable WITHOUT a key
+  # and is used here by default so the scanner runs out of the box.
+  #
+  # options:
+  #   base_url        — switch testnet/production
+  #   max_markets     — cap markets fetched per cycle (each needs one orderbook read)
+  #   max_concurrency — concurrent orderbook requests
+  - name: predictfun
+    enabled: true
+    api_key_env: PREDICTFUN_API_KEY
+    fee_model:
+      type: flat
+      rate: 0.0
+    options:
+      base_url: https://api.predict.fun
+      max_markets: 200
+      max_concurrency: 20
+  # Kalshi trading is on hold pending risk controls (per project decision).
+  # Disabled by default. To enable read-only Kalshi market data, set enabled:
+  # true and provide KALSHI_API_KEY in the environment.
+  - name: kalshi
+    enabled: false
+    api_key_env: KALSHI_API_KEY
+    fee_model:
+      type: kalshi
+
+alerts:
+  # Delivery channels. "log" writes alerts to the application log. "webhook"
+  # is also supported when SCANNER_WEBHOOK_URL is set.
+  channels:
+    - log
+  criteria:
+    # Only alert on opportunities whose net profit margin meets this threshold.
+    min_net_profit_margin: 0.02
+
+# Risk controls (Phase 3, slice G) — the last gate before any order is placed.
+# Conservative defaults: small size, low exposure, human confirmation required,
+# and dry_run ON. NOTE: dry_run only suppresses REAL (money-touching) execution
+# adapters. The paper/simulation adapter ALWAYS simulates fills (positions and
+# realized P&L update) regardless of dry_run, since it never touches real money —
+# so you can see simulated trading work under the default config. When a real
+# execution adapter is wired, dry_run: true will correctly suppress real orders.
+risk:
+  max_trade_size_usd: 100.0        # max stake per single trade
+  max_market_exposure_usd: 200.0   # max exposure per market
+  max_total_exposure_usd: 1000.0   # max total exposure across all positions
+  max_slippage: 0.02               # max allowed price deviation from signal price
+  min_net_profit_margin: 0.02      # minimum net margin to trade
+  max_data_age_seconds: 30.0       # reject signals older than this
+  dry_run: true                    # SAFETY: true = never submit real orders
+  require_confirmation: true       # require human confirmation before execution
