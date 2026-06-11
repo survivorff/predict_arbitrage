@@ -101,6 +101,25 @@
     .fresh { font-size:12px; } .fresh.ok2{color:var(--green);} .fresh.warn{color:var(--amber);} .fresh.bad{color:var(--red);}
     .metrics-row { display:flex; gap:18px; flex-wrap:wrap; }
     .metric { min-width:90px; } .metric .v{font-size:20px;font-weight:700;} .metric .l{font-size:12px;color:var(--muted);}
+
+    /* Detail view (列表 → 详情页分离，matchr 风格可分享 URL) */
+    .detail-view { position:fixed; inset:0; background:var(--bg); overflow-y:auto; z-index:50; }
+    .detail-inner { max-width:1180px; margin:0 auto; padding:18px; }
+    .back-btn { display:inline-flex; align-items:center; gap:6px; cursor:pointer; color:var(--muted); font-size:13px; margin-bottom:14px; }
+    .back-btn:hover { color:var(--text); }
+    .dt-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; margin-bottom:14px; }
+    .dt-title { font-size:22px; font-weight:700; line-height:1.3; }
+    .dt-sub { font-size:13px; color:var(--muted); margin-top:4px; }
+    .dt-cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:14px; }
+    .dt-plat-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
+    .dt-plat-card h3 { font-size:13px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; margin-bottom:10px; }
+    .kv { display:flex; justify-content:space-between; gap:12px; padding:4px 0; font-size:13px; border-bottom:1px solid var(--border); }
+    .kv:last-child { border-bottom:none; } .kv .k { color:var(--muted); }
+    .banner { border-radius:10px; padding:10px 14px; font-size:13px; line-height:1.6; margin-bottom:12px; }
+    .banner.warn { background:var(--red-bg); border:1px solid rgba(231,76,60,.3); }
+    .banner.ok { background:var(--green-bg); border:1px solid rgba(46,204,113,.3); }
+    .banner.info { background:var(--blue-bg); border:1px solid rgba(91,141,239,.3); }
+    a.opp-title:hover, a.row-link:hover { color:var(--blue); }
   </style>
 </head>
 <body>
@@ -205,6 +224,7 @@
     </div>
   </div>
 </div>
+<div id="detail" class="detail-view" style="display:none"></div>
 <script>
 const $ = (id) => document.getElementById(id);
 const pct = (x) => (x*100).toFixed(2)+'%';
@@ -248,6 +268,105 @@ function sparkline(values,caption){
   const last=values[values.length-1];
   return `<div class="muted" style="margin-bottom:4px">${caption} · 区间 ${pct(min)}~${pct(max)} · 最新 ${pct(last)}</div>
     <svg width="100%" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="background:var(--bg2);border:1px solid var(--border);border-radius:6px"><polyline fill="none" stroke="#5b8def" stroke-width="2" points="${pts}"/></svg>`;
+}
+
+// ---- 详情页（列表 → 详情分离，哈希路由 #/match/{gid} · #/market/{plat}/{id}） ----
+function fmtDate(iso){ if(!iso)return '未知'; const d=new Date(iso); return isNaN(d)?'未知':d.toISOString().slice(0,10); }
+function daysBetween(a,b){ if(!a||!b)return null; return Math.abs((new Date(a)-new Date(b))/86400000); }
+function platCardHtml(m){
+  const rows=m.outcomes.map(o=>`<div class="kv"><span class="k">${esc(o.name)}</span><span>价 ${cent(o.price)}¢ · 买 ${o.bid!=null?cent(o.bid)+'¢':'–'} / 卖 ${o.ask!=null?cent(o.ask)+'¢':'–'} · 流 ${fmtUsd(o.available_liquidity_usd)}</span></div>`).join('');
+  const xref=Object.entries(m.cross_refs||{}).map(([p,ids])=>`${esc(p)}:${ids.map(esc).join(',')}`).join('；')||'无';
+  const key=encodeURIComponent(m.platform)+'/'+encodeURIComponent(m.market_id);
+  return `<div class="dt-plat-card">
+    <h3 class="plat ${esc(m.platform)}">${esc(m.platform)}</h3>
+    <div class="dt-sub" style="margin-top:0;margin-bottom:8px">${esc(m.title)}</div>
+    ${rows}
+    <div class="kv"><span class="k">费率</span><span>${m.fee_rate!=null?(m.fee_rate*100).toFixed(2)+'%':'–'}</span></div>
+    <div class="kv"><span class="k">成交量 / 流动性</span><span>${fmtUsd(m.volume_usd)} / ${fmtUsd(m.liquidity_usd)}</span></div>
+    <div class="kv"><span class="k">结算日期</span><span>${fmtDate(m.resolution_date)}</span></div>
+    <div class="kv"><span class="k">数据年龄</span><span>${m.data_age_seconds!=null?m.data_age_seconds.toFixed(0)+'s':'–'}</span></div>
+    <div class="kv"><span class="k">跨平台关联</span><span style="word-break:break-all">${xref}</span></div>
+    <div style="margin-top:8px"><a class="row-link muted" href="#/market/${key}">查看市场详情 →</a></div>
+  </div>`;
+}
+function renderMatchDetail(gid){
+  const box=$('detail'); const g=groupByGid(gid);
+  if(!g){ box.innerHTML=`<div class="detail-inner"><a class="back-btn" href="#">← 返回列表</a><div class="empty">加载中…若持续未显示，可能该匹配已消失或数据未就绪。</div></div>`; return; }
+  const title=esc(g.members[0]?.title??gid); const c=g.match_confidence;
+  let banners='';
+  const probs=impliedYesProbs(g); const ps=probs.map(x=>x.p);
+  if(ps.length>=2){ const dv=Math.max(...ps)-Math.min(...ps); const probStr=probs.map(x=>`${esc(x.platform)} ${pct1(x.p)}`).join(' vs ');
+    banners+= dv>0.10
+      ? `<div class="banner warn">⚠️ <b>隐含概率背离大</b>：${probStr}。同一事件价格本应接近，差异大多意味着不同结算口径/脏数据，而非真套利——务必核对。</div>`
+      : `<div class="banner ok">✅ 两平台隐含概率接近：${probStr}（较可信）。</div>`; }
+  const known=g.members.map(m=>m.resolution_date).filter(Boolean);
+  if(known.length>=2){ let maxd=0; for(let i=0;i<known.length;i++)for(let j=i+1;j<known.length;j++){const d=daysBetween(known[i],known[j]); if(d>maxd)maxd=d;}
+    banners+= maxd>7
+      ? `<div class="banner warn">⚠️ <b>结算日期不一致</b>（相差约 ${maxd.toFixed(0)} 天）：可能是不同结算窗口的不同事件。</div>`
+      : `<div class="banner ok">✅ 结算日期一致（${known.map(fmtDate).join(' / ')}）。</div>`;
+  } else if(known.length>=1){ banners+=`<div class="banner info">ℹ️ 部分平台结算日期未知，无法核对结算窗口是否一致，建议人工确认。</div>`; }
+  let minYes=Infinity,minNo=Infinity,cyP='',cnP='';
+  for(const m of g.members){ const y=m.outcomes.find(o=>o.name.toUpperCase()==='YES'),n=m.outcomes.find(o=>o.name.toUpperCase()==='NO');
+    const ya=(y&&y.ask!=null)?y.ask:(y?y.price:null), na=(n&&n.ask!=null)?n.ask:(n?n.price:null);
+    if(ya!=null&&ya<minYes){minYes=ya;cyP=m.platform;} if(na!=null&&na<minNo){minNo=na;cnP=m.platform;} }
+  let arbHtml='';
+  if(minYes<Infinity&&minNo<Infinity){ const cost=minYes+minNo,edge=1-cost,cls=edge>0?'pos':'neg';
+    arbHtml=`<div class="card"><h2>套利分析（毛价差）</h2>
+      <div class="kv"><span class="k">买 ${esc(cyP)} YES</span><span>${cent(minYes)}¢</span></div>
+      <div class="kv"><span class="k">买 ${esc(cnP)} NO</span><span>${cent(minNo)}¢</span></div>
+      <div class="kv"><span class="k">合计成本</span><span>${cent(cost)}¢</span></div>
+      <div class="kv"><span class="k">毛价差</span><span class="${cls}">${pct(edge)}</span></div>
+      <div class="dt-sub">毛价差未计费用/gas；净套利（计费用+gas+闸门）见下方或「套利机会」标签。</div></div>`; }
+  const opp=state.opps.find(o=>o.group_id===gid);
+  let netHtml='';
+  if(opp){ netHtml=`<div class="card"><h2>净套利（计费用/闸门后）</h2>
+    <div class="kv"><span class="k">净利润率</span><span class="${opp.net_profit_margin>0?'pos':'neg'}">${pct1(opp.net_profit_margin)}</span></div>
+    <div class="kv"><span class="k">可成交规模</span><span>${fmtUsd(opp.recommended_size_usd)}</span></div>
+    ${opp.gas_cost_usd!=null?`<div class="kv"><span class="k">gas / 扣 gas 后利润</span><span>${fmtUsd(opp.gas_cost_usd)} / ${fmtUsd(opp.net_profit_after_gas_usd)}</span></div>`:''}</div>`; }
+  box.innerHTML=`<div class="detail-inner">
+    <a class="back-btn" href="#">← 返回列表</a>
+    <div class="dt-head"><div><div class="dt-title">${title}</div><div class="dt-sub">${g.members.length} 个平台跨平台匹配</div></div>
+      <span class="conf ${confClass(c)}">${(c*100).toFixed(0)}% 匹配</span></div>
+    ${banners}
+    <div class="dt-cols">${g.members.map(platCardHtml).join('')}</div>
+    <div style="margin-top:14px">${arbHtml}${netHtml}</div>
+    <div class="card"><h2>净利润率历史</h2><div id="dt-chart" class="muted">加载…</div></div>
+  </div>`;
+  getJSON(`/opportunities/${encodeURIComponent(gid)}/history?limit=200`).then(pts=>{const el=$('dt-chart'); if(el)el.innerHTML=pts.length>=2?sparkline(pts.map(p=>p.value),'净利润率走势'):'<span class="muted">历史不足（需累积多周期，或该组当前无机会）</span>';}).catch(()=>{const el=$('dt-chart'); if(el)el.innerHTML='<span class="muted">暂无历史</span>';});
+}
+async function renderMarketDetail(plat,id){
+  const box=$('detail'); box.innerHTML=`<div class="detail-inner"><a class="back-btn" href="#">← 返回列表</a><div class="empty">加载市场详情…</div></div>`;
+  let m; try{ m=await getJSON('/markets/'+encodeURIComponent(plat)+'/'+encodeURIComponent(id)); }
+  catch(e){ box.innerHTML=`<div class="detail-inner"><a class="back-btn" href="#">← 返回列表</a><div class="empty err">加载失败：${esc(e.message)}</div></div>`; return; }
+  const xref=Object.entries(m.cross_refs||{}).map(([p,ids])=>`${esc(p)}:${ids.map(esc).join(',')}`).join('；')||'无';
+  const obs=m.outcomes.map(o=>`<div class="dt-plat-card"><h3>${esc(o.name)}</h3>
+    <div class="kv"><span class="k">价格</span><span>${cent(o.price)}¢</span></div>
+    <div class="kv"><span class="k">买价 / 卖价</span><span>${o.bid!=null?cent(o.bid)+'¢':'–'} / ${o.ask!=null?cent(o.ask)+'¢':'–'}</span></div>
+    <div class="kv"><span class="k">可成交流动性</span><span>${fmtUsd(o.available_liquidity_usd)}</span></div></div>`).join('');
+  box.innerHTML=`<div class="detail-inner">
+    <a class="back-btn" href="#">← 返回列表</a>
+    <div class="dt-head"><div><div class="dt-title">${esc(m.title)}</div>
+      <div class="dt-sub"><span class="plat ${esc(m.platform)}">${esc(m.platform)}</span> ${m.category?'· '+esc(catLabel(m.category)):''} · ${freshnessLabel(m.data_age_seconds)}</div></div></div>
+    <div class="dt-cols">${obs}</div>
+    <div class="card" style="margin-top:14px"><h2>市场信息</h2>
+      <div class="kv"><span class="k">费率</span><span>${m.fee_rate!=null?(m.fee_rate*100).toFixed(2)+'%':'–'}</span></div>
+      <div class="kv"><span class="k">成交量</span><span>${fmtUsd(m.volume_usd)}</span></div>
+      <div class="kv"><span class="k">流动性</span><span>${fmtUsd(m.liquidity_usd)}</span></div>
+      <div class="kv"><span class="k">结算日期</span><span>${fmtDate(m.resolution_date)}</span></div>
+      <div class="kv"><span class="k">跨平台关联</span><span style="word-break:break-all">${xref}</span></div>
+      <div class="kv"><span class="k">市场 ID</span><span style="word-break:break-all">${esc(m.market_id)}</span></div></div>
+    <div class="card"><h2>YES 价历史</h2><div id="dt-chart" class="muted">加载…</div></div>
+  </div>`;
+  getJSON('/markets/'+encodeURIComponent(plat)+'/'+encodeURIComponent(id)+'/history?limit=200').then(pts=>{const el=$('dt-chart'); if(el)el.innerHTML=pts.length>=2?sparkline(pts.map(p=>p.value),'YES 价走势'):'<span class="muted">历史不足</span>';}).catch(()=>{const el=$('dt-chart'); if(el)el.innerHTML='<span class="muted">暂无历史</span>';});
+}
+function router(){
+  const h=location.hash;
+  const det=$('detail');
+  const mMatch=h.match(/^#\/match\/(.+)$/);
+  const mMkt=h.match(/^#\/market\/([^/]+)\/(.+)$/);
+  if(mMatch){ det.style.display=''; renderMatchDetail(decodeURIComponent(mMatch[1])); window.scrollTo(0,0); }
+  else if(mMkt){ det.style.display=''; renderMarketDetail(decodeURIComponent(mMkt[1]),decodeURIComponent(mMkt[2])); window.scrollTo(0,0); }
+  else { det.style.display='none'; det.innerHTML=''; }
 }
 
 // ---- 顶部统计条 ----
@@ -299,7 +418,7 @@ function renderOpps(){
     }
     const sizeWarn = o.recommended_size_usd<100 ? ` <span class="verify">· 规模小，链上 gas 可能吃掉利润</span>` : '';
     html+=`<div class="opp">
-      <div class="opp-top"><div class="opp-title">${esc(o.event_title)}</div>
+      <div class="opp-top"><a class="opp-title row-link" href="#/match/${gid}">${esc(o.event_title)}</a>
         <div class="edge"><div class="pct ${o.net_profit_margin>0?'pos':'neg'}">${pct1(o.net_profit_margin)}</div><div class="lbl">净利润率</div></div></div>
       <div class="legs">${legsHtml}</div>
       <div class="directive">两腿买入，可成交规模 ${fmtUsd(o.recommended_size_usd)}${sizeWarn}</div>
@@ -365,7 +484,7 @@ function matchCardHtml(g,i){
     if(edge>0) dir=`<div class="directive">买 ${esc(cheapYesPlat)} YES(${cent(minYes)}¢) + ${esc(cheapNoPlat)} NO(${cent(minNo)}¢) = ${cent(cost)}¢</div>`;
   }
   return `<div class="opp">
-    <div class="opp-top"><div class="opp-title">${esc(title)}</div>${edgeHtml}</div>
+    <div class="opp-top"><a class="opp-title row-link" href="#/match/${encodeURIComponent(g.group_id)}">${esc(title)}</a>${edgeHtml}</div>
     <div class="legs">${legHtml}</div>
     ${dir}
     <div class="opp-foot">
@@ -414,13 +533,13 @@ function renderMarkets(){
     const yes=m.outcomes.find(o=>o.name.toUpperCase()==='YES')||m.outcomes[0];
     const key=encodeURIComponent(m.platform)+'/'+encodeURIComponent(m.market_id);
     const ct=m.category?`<span class="cat">${esc(catLabel(m.category))}</span>`:'';
-    rows+=`<tr class="clickable mkt-row" data-key="${key}"><td>${esc(m.title)} ${ct}</td><td class="muted">${esc(m.platform)}</td>
-      <td class="num">${yes?cent(yes.price)+'¢':'–'}</td><td class="num">${fmtUsd(m.volume_usd)}</td><td class="num">${fmtUsd(m.liquidity_usd)}</td><td class="num muted">${m.data_age_seconds?.toFixed?.(0)??'–'}s</td></tr>
-      <tr class="mkt-detail" data-detail="${key}" style="display:none"><td colspan="6"><div class="ob-box muted">点击加载…</div></td></tr>`;
+    rows+=`<tr class="clickable mkt-row" data-key="${key}"><td><a class="row-link" href="#/market/${key}">${esc(m.title)}</a> ${ct}</td><td class="muted">${esc(m.platform)}</td>
+      <td class="num">${yes?cent(yes.price)+'¢':'–'}</td><td class="num">${fmtUsd(m.volume_usd)}</td><td class="num">${fmtUsd(m.liquidity_usd)}</td><td class="num muted">${m.data_age_seconds?.toFixed?.(0)??'–'}s</td></tr>`;
   }
-  $('markets').innerHTML=`<div class="card" style="margin:0;padding:0"><table><thead><tr><th>标题</th><th>平台</th><th class="num">YES价</th><th class="num">成交量</th><th class="num">流动性</th><th class="num">年龄</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-  document.querySelectorAll('.mkt-row').forEach(r=>r.addEventListener('click',()=>toggleMarketDetail(r.dataset.key)));
+  $('markets').innerHTML=`<div class="card" style="margin:0;padding:0"><table><thead><tr><th>标题（点击看详情）</th><th>平台</th><th class="num">YES价</th><th class="num">成交量</th><th class="num">流动性</th><th class="num">年龄</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  document.querySelectorAll('.mkt-row').forEach(r=>r.addEventListener('click',(e)=>{ if(e.target.tagName!=='A') navTo('#/market/'+r.dataset.key); }));
 }
+function navTo(h){ location.hash=h; }
 async function toggleMarketDetail(key){
   const d=document.querySelector(`.mkt-detail[data-detail="${key}"]`); if(!d)return;
   if(d.style.display!=='none'){ d.style.display='none'; return; }
@@ -582,6 +701,7 @@ async function refresh(){
     try{ const pnl=await getJSON('/trade/pnl'); if(pnl&&pnl.executed_trades>0){ const cls=pnl.total_realized_profit_usd>=0?'pos':'neg'; $('pnl-summary').innerHTML=`· 已执行 ${pnl.executed_trades} · 真盈利 ${pnl.profitable_trades}/亏损 ${pnl.losing_trades} · 累计 <span class="${cls}">${fmtUsd(pnl.total_realized_profit_usd)}</span>`; } else $('pnl-summary').textContent=''; }catch(e){}
     renderAccount();
     $('updated').textContent='更新于 '+new Date().toLocaleTimeString();
+    if(location.hash) router();
   }catch(e){ $('status').innerHTML='<span class="dot bad"></span>连接失败'; $('updated').innerHTML=`<span class="err">${e.message}</span>`; }
 }
 
@@ -605,7 +725,8 @@ function bindToolbars(){
 
 $('refresh').addEventListener('click',refresh);
 $('connect-wallet').addEventListener('click',connectWallet);
-bindTabs(); bindToolbars(); renderWallet(); refresh();
+window.addEventListener('hashchange',router);
+bindTabs(); bindToolbars(); renderWallet(); router(); refresh();
 setInterval(refresh,10000);
 </script>
 </body>

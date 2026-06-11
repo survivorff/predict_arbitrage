@@ -95,6 +95,8 @@ class MarketResponse(BaseModel):
     liquidity_usd: Optional[float] = None
     fee_rate: Optional[float] = None
     category: Optional[str] = None
+    resolution_date: Optional[datetime] = None
+    cross_refs: Dict[str, List[str]] = Field(default_factory=dict)
     retrieved_at: datetime
     is_stale: bool
     data_age_seconds: float
@@ -111,6 +113,8 @@ class MarketResponse(BaseModel):
             liquidity_usd=market.liquidity_usd,
             fee_rate=market.fee_rate,
             category=market.category,
+            resolution_date=market.resolution_date,
+            cross_refs=dict(market.cross_refs),
             retrieved_at=market.retrieved_at,
             is_stale=market.is_stale,
             data_age_seconds=market.age_seconds,
