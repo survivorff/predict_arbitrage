@@ -540,3 +540,97 @@ def test_gas_min_net_profit_floor_gates_below_threshold():
         clock=_clock, gas_cost_per_leg_usd=2.0, min_net_profit_after_gas_usd=50.0
     )
     assert engine.evaluate_group(_arb_group_for_gas(liq=300.0)) is None
+
+
+# ---------------------------------------------------------------------------
+# 结果极性强校验（B-1）：买入结果必须与赔付条件一致，否则拒绝（防错配裸赌）。
+# ---------------------------------------------------------------------------
+
+def _corrupted_polarity_group() -> EquivalentMarketGroup:
+    """构造一个**对齐被搞反**的组：两腿都买 YES 名却分别声称服务 YES 和 NO。
+
+    模拟真实 bug：outcome_map 把 polymarket 的 "YES" 名错误地登记为「服务规范 NO、
+    未反转」。这样套利引擎会对两个平台都买 YES，退化为双倍单边裸赌——B-1 应拦下。
+    """
+    poly = _market("polymarket", yes_ask=0.45, no_ask=0.62)
+    kalshi = _market("kalshi", yes_ask=0.46, no_ask=0.61)
+    # 正常 YES 对齐：两平台都映射到各自 "YES"。
+    yes_align = OutcomeAlignment(
+        canonical_outcome="YES",
+        platform_outcomes={"polymarket": "YES", "kalshi": "YES"},
+        inverted={"polymarket": False, "kalshi": False},
+    )
+    # 被污染的 NO 对齐：错误地把 polymarket/kalshi 的 "YES" 名当作赔付 NO、且未标反转。
+    bad_no_align = OutcomeAlignment(
+        canonical_outcome="NO",
+        platform_outcomes={"polymarket": "YES", "kalshi": "YES"},
+        inverted={"polymarket": False, "kalshi": False},
+    )
+    return EquivalentMarketGroup(
+        group_id="corrupt-polarity",
+        members=[poly, kalshi],
+        outcome_map=[yes_align, bad_no_align],
+        match_confidence=1.0,
+    )
+
+
+def test_polarity_gate_rejects_corrupted_alignment():
+    """对齐被搞反（买入名与赔付条件矛盾）→ 极性强校验拒绝整笔机会。"""
+    engine = ArbitrageEngine(clock=_clock)
+    assert engine.evaluate_group(_corrupted_polarity_group()) is None
+
+
+def test_polarity_gate_allows_correct_inverted_alignment():
+    """正当的反转表述（一平台 YES 名映射规范 NO 并标 inverted=True）应通过校验。
+
+    poly 正常；kalshi 把问题表述为否定（其 "NO" 名对应规范 YES），map_outcomes 会
+    标 inverted=True。这是合法的同一事件对齐，不应被极性校验误拒。
+    """
+    poly = _market("polymarket", yes_ask=0.45, no_ask=0.62)
+    kalshi = _market("kalshi", yes_ask=0.40, no_ask=0.61)
+    yes_align = OutcomeAlignment(
+        canonical_outcome="YES",
+        platform_outcomes={"polymarket": "YES", "kalshi": "NO"},  # kalshi 反转：买 NO 名服务规范 YES
+        inverted={"polymarket": False, "kalshi": True},
+    )
+    no_align = OutcomeAlignment(
+        canonical_outcome="NO",
+        platform_outcomes={"polymarket": "NO", "kalshi": "YES"},
+        inverted={"polymarket": False, "kalshi": True},
+    )
+    group = EquivalentMarketGroup(
+        group_id="legit-inverted",
+        members=[poly, kalshi],
+        outcome_map=[yes_align, no_align],
+        match_confidence=1.0,
+    )
+    opp = engine_eval(group)
+    assert opp is not None
+
+
+def engine_eval(group: EquivalentMarketGroup):
+    return ArbitrageEngine(clock=_clock).evaluate_group(group)
+
+
+def test_polarity_gate_rejects_duplicate_canonical_outcome():
+    """两条腿都服务同一规范结果（都赔 YES）→ 非互补组合，拒绝。"""
+    poly = _market("polymarket", yes_ask=0.45, no_ask=0.62)
+    kalshi = _market("kalshi", yes_ask=0.46, no_ask=0.61)
+    yes_a = OutcomeAlignment(
+        canonical_outcome="YES",
+        platform_outcomes={"polymarket": "YES", "kalshi": "YES"},
+        inverted={"polymarket": False, "kalshi": False},
+    )
+    # 第二个对齐也声称服务 YES（重复）——非法，应被拒。
+    yes_b = OutcomeAlignment(
+        canonical_outcome="YES",
+        platform_outcomes={"polymarket": "YES", "kalshi": "YES"},
+        inverted={"polymarket": False, "kalshi": False},
+    )
+    group = EquivalentMarketGroup(
+        group_id="dup-canonical",
+        members=[poly, kalshi],
+        outcome_map=[yes_a, yes_b],
+        match_confidence=1.0,
+    )
+    assert ArbitrageEngine(clock=_clock).evaluate_group(group) is None

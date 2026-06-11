@@ -40,11 +40,13 @@ in tests.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
 
 from scanner.fees import FeeModel, FlatFeeModel
+from scanner.matching import _outcome_polarity
 from scanner.models import (
     ArbitrageOpportunity,
     ArbLeg,
@@ -57,6 +59,9 @@ from scanner.models import (
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+logger = logging.getLogger(__name__)
 
 
 # 最小可成交 ask：低于等于此值的 ask 视为数据缺陷（价格≈0 处不存在真实卖单，
@@ -75,6 +80,10 @@ class _ChosenLeg:
     liquidity_usd: Optional[float]
     age_seconds: float
     fee_rate: Optional[float] = None  # 市场自报的费率（如 predict.fun feeRateBps→0.02）
+    # 该腿服务的规范结果（"YES"/"NO"）与该平台是否反转表述。用于下单前的极性强校验
+    # （B-1）：独立核对「买入的原生结果名的内在极性」是否与对齐声称的赔付条件一致。
+    canonical_outcome: str = "YES"
+    inverted: bool = False
 
 
 @dataclass
@@ -174,6 +183,18 @@ class ArbitrageEngine:
         if not chosen:
             return None
 
+        # 结果极性强校验（Tier-0 红线 B / 缺口 B-1，下单前防错配）：套利要求两腿买入的是
+        # **真正互补**的结果（恰好一边赔付）。若极性判断反了，「买 YES + 买 NO」会退化为
+        # 「买 YES + 买 YES」= 双倍单边裸赌，不是对冲、会亏钱。这里**独立**地核对每条腿——
+        # 用其原生结果名的内在极性，对照对齐声称的赔付条件——任一不一致即拒绝整笔机会。
+        # 详见 docs/15 ADR-005。
+        if not self._polarity_consistent(chosen):
+            logger.warning(
+                "套利组 %s 极性强校验失败：买入结果与赔付条件不一致，拒绝该机会以防错配裸赌。",
+                group.group_id,
+            )
+            return None
+
         cost_per_pair = sum(leg.ask for leg in chosen)
         if cost_per_pair <= 0:
             # Degenerate pricing (e.g. all asks zero); margin is undefined.
@@ -241,6 +262,41 @@ class ArbitrageEngine:
 
     def _fee_model_for(self, platform: str) -> FeeModel:
         return self.fee_models.get(platform, self.default_fee_model)
+
+    @staticmethod
+    def _polarity_consistent(chosen: List["_ChosenLeg"]) -> bool:
+        """结果极性强校验（B-1）：独立核对每条腿买入的结果与其赔付条件是否一致。
+
+        套利的对冲性建立在「两腿买入真正互补的结果、恰好一边赔付」之上。本校验**不信任**
+        对齐结果（outcome_map）本身，而是从每条腿**原生结果名**独立推断极性，再对照该腿
+        声称服务的规范结果（canonical_outcome）与是否反转（inverted），三者必须自洽：
+
+            期望原生极性 = (canonical 为 YES) XOR inverted
+
+        即：服务规范 YES 且未反转 → 应买 YES 名；服务规范 YES 且反转 → 应买 NO 名；
+        服务规范 NO 同理对称。若某腿原生名的内在极性可判定且与期望相反，说明对齐被
+        污染/搞反了（典型 bug：把 YES 名错当成赔 NO），此时绝不能当套利下单。
+
+        此外要求所选各腿覆盖的规范结果**互不相同**（二元应恰好 YES+NO 各一），否则不是
+        互补组合（如两腿都赔 YES = 双倍单边裸赌）。
+
+        原生名极性无法判定（``_outcome_polarity`` 返回 None）时不据此否决（无法核对，
+        留给其它闸门），避免对非常规命名误杀。
+        """
+        canonical_seen: set = set()
+        for leg in chosen:
+            canonical_is_yes = leg.canonical_outcome.strip().upper() == "YES"
+            # 同一规范结果被两条腿重复服务 → 不构成互补，拒绝。
+            if canonical_is_yes in canonical_seen:
+                return False
+            canonical_seen.add(canonical_is_yes)
+
+            expected = canonical_is_yes ^ bool(leg.inverted)
+            actual = _outcome_polarity(leg.outcome_name)
+            if actual is not None and actual != expected:
+                return False
+        # 二元套利应覆盖两个不同的规范结果（YES 与 NO）。
+        return len(canonical_seen) >= 2
 
     def _leg_fee(self, leg: "_ChosenLeg") -> float:
         """一条腿的手续费，取「配置费用模型」与「市场自报费率」的**较大值**。
@@ -320,6 +376,8 @@ class ArbitrageEngine:
                 liquidity_usd=outcome.available_liquidity_usd,
                 age_seconds=self._age_seconds(member),
                 fee_rate=member.fee_rate,
+                canonical_outcome=alignment.canonical_outcome,
+                inverted=bool(alignment.inverted.get(member.platform, False)),
             )
             if best is None or self._is_cheaper(candidate, best):
                 best = candidate
