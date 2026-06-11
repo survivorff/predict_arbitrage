@@ -331,17 +331,50 @@ function renderGroups(){
   let groups=all.filter(g=>g.match_confidence>=state.grpConf);
   if(q) groups=groups.filter(g=>(g.members[0]?.title??'').toLowerCase().includes(q));
   if(!groups.length){ $('groups').innerHTML=`<div class="empty">${all.length?'无匹配的组':'当前无匹配组'}</div>`; return; }
-  let rows='';
-  groups.forEach((g,i)=>{
-    const title=g.members[0]?.title??g.group_id;
-    const plats=g.members.map(m=>m.platform).join(' × ');
-    const c=g.match_confidence;
-    rows+=`<tr class="clickable" data-grp="${i}"><td>${esc(title)}</td><td class="muted">${esc(plats)}</td>
-      <td class="num"><span class="conf ${confClass(c)}">${(c*100).toFixed(0)}%</span></td></tr>
-      <tr class="grp-detail" data-detail="${i}" style="display:none"><td colspan="3">${groupDetailHtml(g)}</td></tr>`;
-  });
-  $('groups').innerHTML=`<div class="card" style="margin:0;padding:0"><table><thead><tr><th>事件（点击看双平台价差）</th><th>平台</th><th class="num">匹配置信度</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-  document.querySelectorAll('[data-grp]').forEach(r=>r.addEventListener('click',()=>{const d=document.querySelector(`.grp-detail[data-detail="${r.dataset.grp}"]`); if(d)d.style.display=d.style.display==='none'?'':'none';}));
+  // matchr 风格：每个匹配对渲染为「配对卡」——并排展示各平台 YES/NO 价（美分）、
+  // 成交量，右上角大号毛价差，底部匹配置信度与诚实免责，点击展开盘口明细。
+  let cards='';
+  groups.forEach((g,i)=>{ cards+=matchCardHtml(g,i); });
+  $('groups').innerHTML=`<div class="opp-grid">${cards}</div>`;
+  document.querySelectorAll('[data-mgrp]').forEach(el=>el.addEventListener('click',(ev)=>{
+    ev.stopPropagation();
+    const d=document.querySelector(`.mgrp-detail[data-detail="${el.dataset.mgrp}"]`);
+    if(d)d.style.display=d.style.display==='none'?'':'none';
+  }));
+}
+function matchCardHtml(g,i){
+  const title=g.members[0]?.title??g.group_id;
+  const c=g.match_confidence;
+  let minYes=Infinity,minNo=Infinity,cheapYesPlat='',cheapNoPlat='';
+  const legHtml=g.members.map(m=>{
+    const yes=m.outcomes.find(o=>o.name.toUpperCase()==='YES');
+    const no=m.outcomes.find(o=>o.name.toUpperCase()==='NO');
+    const ya=(yes&&yes.ask!=null)?yes.ask:(yes?yes.price:null);
+    const na=(no&&no.ask!=null)?no.ask:(no?no.price:null);
+    if(ya!=null&&ya<minYes){minYes=ya;cheapYesPlat=m.platform;}
+    if(na!=null&&na<minNo){minNo=na;cheapNoPlat=m.platform;}
+    return `<div class="leg"><div class="plat ${esc(m.platform)}">${esc(m.platform)}</div>
+      <div class="px">${ya!=null?cent(ya):'–'}<span class="cent">¢ YES</span></div>
+      <div class="oc muted">NO ${na!=null?cent(na)+'¢':'–'}</div>
+      <div class="vol">${fmtUsd(m.volume_usd)} vol</div></div>`;
+  }).join('');
+  let edgeHtml='', dir='';
+  if(minYes<Infinity&&minNo<Infinity){
+    const cost=minYes+minNo, edge=1-cost, cls=edge>0?'pos':'neg';
+    edgeHtml=`<div class="edge"><div class="pct ${cls}">${pct(edge)}</div><div class="lbl">毛价差</div></div>`;
+    if(edge>0) dir=`<div class="directive">买 ${esc(cheapYesPlat)} YES(${cent(minYes)}¢) + ${esc(cheapNoPlat)} NO(${cent(minNo)}¢) = ${cent(cost)}¢</div>`;
+  }
+  return `<div class="opp">
+    <div class="opp-top"><div class="opp-title">${esc(title)}</div>${edgeHtml}</div>
+    <div class="legs">${legHtml}</div>
+    ${dir}
+    <div class="opp-foot">
+      <span class="conf ${confClass(c)}">${(c*100).toFixed(0)}% 匹配</span>
+      <a class="muted" data-mgrp="${i}" style="cursor:pointer">盘口明细 ▾</a>
+    </div>
+    <div class="mgrp-detail" data-detail="${i}" style="display:none;margin-top:4px">${groupDetailHtml(g)}</div>
+    <div class="verify">⚠️ 毛价差未计费用/gas，净套利以「套利机会」为准</div>
+  </div>`;
 }
 function groupDetailHtml(g){
   const px=o=>o?cent(o.price):'–', ask=o=>(o&&o.ask!=null)?cent(o.ask):'–';
