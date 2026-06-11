@@ -93,6 +93,7 @@ class ExecutionEngine:
                     side=OrderSide.BUY,
                     target_price=arb_leg.price,
                     quantity=contracts,  # 各腿等量合约，确保对冲
+                    available_liquidity_usd=arb_leg.available_liquidity_usd,
                 )
             )
         return TradePlan(
@@ -136,7 +137,19 @@ class ExecutionEngine:
         filled_orders: List[Order] = []  # 已成交（或部分成交）的腿，用于补救
         failure_reason: Optional[str] = None
 
-        for leg in plan.legs:
+        # 先难后易（降低 leg risk）：按可成交流动性**升序**执行——先下流动性最差/最难
+        # 成交的腿。若它失败，此时尚未动用其它腿，无需补救、损失最小；只有最难的腿成了，
+        # 才去下较容易的腿。流动性未知（None）视为最薄、排最前（最保守）。
+        execution_order = sorted(
+            plan.legs,
+            key=lambda leg: (
+                leg.available_liquidity_usd
+                if leg.available_liquidity_usd is not None
+                else 0.0
+            ),
+        )
+
+        for leg in execution_order:
             adapter = self.adapters.get(leg.platform)
             if adapter is None:
                 failure_reason = f"无 {leg.platform} 的执行适配器"
@@ -157,10 +170,13 @@ class ExecutionEngine:
             if order.status is OrderStatus.FILLED:
                 filled_orders.append(order)
             else:
-                # 未完全成交（部分成交/挂单未成/失败）也视为该腿未达成，触发补救。
+                # 全成或撤（IOC / fill-or-kill）：未完全成交即视为该腿未达成，并**立即撤掉
+                # 未成交部分**——绝不把一个挂单（resting order）留在簿上，否则它可能在我们
+                # 补救完之后才成交，凭空制造新的单边裸敞口。部分成交的已成交量仍需补救平仓。
                 failure_reason = (
                     f"{leg.platform} 腿未完全成交（状态 {order.status.value}）"
                 )
+                await self._kill_remainder(adapter, order)
                 if order.filled_quantity > 0:
                     filled_orders.append(order)
                 break
@@ -233,6 +249,23 @@ class ExecutionEngine:
         plan.notes = "[DRY-RUN] 演练（未真正下单）：" + " ＋ ".join(intents)
         plan.updated_at = now
         return plan
+
+    async def _kill_remainder(self, adapter: ExecutionAdapter, order: Order) -> None:
+        """全成或撤：撤掉一笔未完全成交订单的挂单/未成交部分。
+
+        IOC（immediate-or-cancel）语义的落地：当一条腿没有全额成交（部分成交或挂单未成），
+        必须立刻撤掉它在簿上的剩余挂单，**绝不让它在我们补救完之后才成交**而凭空产生新的
+        单边裸敞口。已成交的部分由 :meth:`_remediate` 反向平仓处理；这里只负责取消未成交
+        的剩余。撤单失败（订单可能已是终态）只记日志、不致命。
+        """
+        if order.platform_order_id is None:
+            return
+        try:
+            await adapter.cancel_order(order.platform_order_id)
+        except ExecutionError:
+            logger.warning(
+                "计划腿订单 %s 撤单失败（可能已终态），继续补救", order.order_id
+            )
 
     async def _remediate(
         self, plan: TradePlan, filled_orders: List[Order], reason: str

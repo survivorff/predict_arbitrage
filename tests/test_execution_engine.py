@@ -654,3 +654,194 @@ async def test_filled_orders_exposed_for_persistence() -> None:
     orders = engine.last_orders.get(plan.plan_id, [])
     assert len(orders) == 2
     assert all(o.filled_quantity > 0 for o in orders)
+
+
+# --------------------------------------------------------------------------- #
+# leg risk 执行改进：先难后易排序 + 全成或撤（IOC）
+# --------------------------------------------------------------------------- #
+class RecordingAdapter:
+    """记录下单顺序与撤单调用的假执行适配器，可配置成交行为。
+
+    - ``order_log`` 为共享列表，按 ``place_order`` 实际被调用的顺序追加平台名，
+      用于断言「先难后易」的执行次序。
+    - ``buy_fills`` 控制买单是全成（FILLED）还是部分成交（PARTIALLY_FILLED）。
+    - 记录 ``cancelled`` 平台订单号，用于断言 IOC 撤单。
+    - 卖出（补救平仓）始终全成，使残余敞口判断聚焦在被测路径上。
+    """
+
+    def __init__(
+        self,
+        name: str,
+        clock: FakeClock,
+        order_log: List[str],
+        *,
+        buy_fills: bool = True,
+    ) -> None:
+        self.name = name
+        self._clock = clock
+        self._seq = 0
+        self.order_log = order_log
+        self.cancelled: List[str] = []
+        self.buy_fills = buy_fills
+        self.is_paper = False
+
+    async def place_order(
+        self,
+        *,
+        market_id: str,
+        outcome: str,
+        side: OrderSide,
+        limit_price: float,
+        quantity: float,
+    ) -> Order:
+        self._seq += 1
+        now = self._clock()
+        oid = f"{self.name}-{self._seq}"
+        if side is OrderSide.BUY:
+            self.order_log.append(self.name)
+            if self.buy_fills:
+                filled, status = quantity, OrderStatus.FILLED
+            else:
+                filled, status = quantity / 2.0, OrderStatus.PARTIALLY_FILLED
+        else:  # 补救平仓（卖出）始终全成
+            filled, status = quantity, OrderStatus.FILLED
+        return Order(
+            order_id=oid,
+            platform=self.name,
+            market_id=market_id,
+            outcome=outcome,
+            side=side,
+            limit_price=limit_price,
+            quantity=quantity,
+            status=status,
+            platform_order_id=oid,
+            filled_quantity=filled,
+            avg_fill_price=limit_price,
+            created_at=now,
+            updated_at=now,
+        )
+
+    async def cancel_order(self, platform_order_id: str) -> Order:
+        self.cancelled.append(platform_order_id)
+        now = self._clock()
+        return Order(
+            order_id=platform_order_id,
+            platform=self.name,
+            market_id="?",
+            outcome="?",
+            side=OrderSide.BUY,
+            limit_price=0.5,
+            quantity=0.0,
+            status=OrderStatus.CANCELLED,
+            platform_order_id=platform_order_id,
+            created_at=now,
+            updated_at=now,
+        )
+
+    async def get_order(self, platform_order_id: str) -> Order:  # pragma: no cover
+        raise ExecutionError("not used", platform=self.name)
+
+    async def get_balance(self) -> float:  # pragma: no cover
+        return 0.0
+
+    async def get_positions(self) -> list:  # pragma: no cover
+        return []
+
+
+def _opportunity_with_liquidity(
+    *, poly_liq: float, kalshi_liq: float
+) -> ArbitrageOpportunity:
+    return ArbitrageOpportunity(
+        group_id="grp-liq",
+        event_title="leg risk 排序测试",
+        legs=[
+            ArbLeg(
+                platform="polymarket",
+                market_id="poly-m1",
+                outcome="YES",
+                price=0.40,
+                available_liquidity_usd=poly_liq,
+            ),
+            ArbLeg(
+                platform="kalshi",
+                market_id="kalshi-m1",
+                outcome="NO",
+                price=0.45,
+                available_liquidity_usd=kalshi_liq,
+            ),
+        ],
+        net_profit_margin=0.15,
+        recommended_size_usd=20.0,
+        detected_at=BASE_TIME,
+        data_age_seconds=1.0,
+    )
+
+
+async def test_executes_thinnest_liquidity_leg_first():
+    """先难后易：流动性更薄的腿（kalshi $20 < poly $500）应先下单。"""
+    clock = FakeClock()
+    order_log: List[str] = []
+    poly = RecordingAdapter("polymarket", clock, order_log)
+    kalshi = RecordingAdapter("kalshi", clock, order_log)
+    engine = ExecutionEngine(adapters={"polymarket": poly, "kalshi": kalshi}, clock=clock)
+
+    opp = _opportunity_with_liquidity(poly_liq=500.0, kalshi_liq=20.0)
+    plan = engine.build_plan(opp, size_usd=20.0)
+    result = await engine.execute_plan(plan)
+
+    # 两腿都全成 → COMPLETED；且 kalshi（更薄）先于 polymarket 被下单。
+    assert result.status is TradePlanStatus.COMPLETED
+    assert order_log == ["kalshi", "polymarket"]
+
+
+async def test_leg_build_plan_propagates_liquidity():
+    """build_plan 应把每腿的可成交流动性带入 TradeLeg（供排序用）。"""
+    engine = ExecutionEngine(adapters={}, clock=FakeClock())
+    opp = _opportunity_with_liquidity(poly_liq=500.0, kalshi_liq=20.0)
+    plan = engine.build_plan(opp, size_usd=20.0)
+    liq = {leg.platform: leg.available_liquidity_usd for leg in plan.legs}
+    assert liq == {"polymarket": 500.0, "kalshi": 20.0}
+
+
+async def test_partial_fill_remainder_is_cancelled_ioc():
+    """全成或撤：第二腿部分成交时，应立即撤掉其未成交挂单（IOC），并触发补救。
+
+    构造：poly（更薄，先下）买入全成；kalshi（较厚，后下）只部分成交 → 引擎对 kalshi
+    订单调用 cancel_order 撤掉剩余，再反向平掉已成交的 poly 腿，计划 FAILED。
+    """
+    clock = FakeClock()
+    order_log: List[str] = []
+    poly = RecordingAdapter("polymarket", clock, order_log, buy_fills=True)
+    kalshi = RecordingAdapter("kalshi", clock, order_log, buy_fills=False)  # 部分成交
+    engine = ExecutionEngine(adapters={"polymarket": poly, "kalshi": kalshi}, clock=clock)
+
+    # poly 更薄 → 先下并全成；kalshi 较厚 → 后下且部分成交。
+    opp = _opportunity_with_liquidity(poly_liq=20.0, kalshi_liq=500.0)
+    plan = engine.build_plan(opp, size_usd=20.0)
+    result = await engine.execute_plan(plan)
+
+    assert result.status is TradePlanStatus.FAILED
+    # IOC：kalshi 的部分成交订单的剩余被撤单。
+    assert kalshi.cancelled == ["kalshi-1"]
+    # 已成交的 poly 腿被反向平仓（无残余敞口）。
+    assert engine.has_residual_exposure(result) is False
+
+
+async def test_first_leg_partial_fill_killed_and_no_second_leg():
+    """最难成交的腿（先下）部分成交即被撤单，且不再下第二腿（避免裸敞口）。"""
+    clock = FakeClock()
+    order_log: List[str] = []
+    # kalshi 更薄 → 先下且部分成交；poly 较厚 → 本不该被下单。
+    poly = RecordingAdapter("polymarket", clock, order_log, buy_fills=True)
+    kalshi = RecordingAdapter("kalshi", clock, order_log, buy_fills=False)
+    engine = ExecutionEngine(adapters={"polymarket": poly, "kalshi": kalshi}, clock=clock)
+
+    opp = _opportunity_with_liquidity(poly_liq=500.0, kalshi_liq=20.0)
+    plan = engine.build_plan(opp, size_usd=20.0)
+    result = await engine.execute_plan(plan)
+
+    assert result.status is TradePlanStatus.FAILED
+    # 只下了 kalshi（最薄、先下）这一腿；poly 未被下单（买单日志里没有 polymarket）。
+    assert order_log == ["kalshi"]
+    # kalshi 部分成交剩余被 IOC 撤单。
+    assert kalshi.cancelled == ["kalshi-1"]

@@ -155,6 +155,9 @@ class ArbLeg(BaseModel):
     outcome: str
     side: str = "buy"
     price: float
+    # 该腿在检测时可成交的流动性（USD）。执行引擎用它做「先难后易」排序：先下流动性
+    # 最差/最难成交的腿，若失败则尚未动用其它腿，补救成本最小。None=未知（视为最薄）。
+    available_liquidity_usd: Optional[float] = None
 
     @field_validator("price")
     @classmethod
@@ -376,6 +379,8 @@ class TradeLeg(BaseModel):
     target_price: float              # 期望成交价（来自信号的 ask 价）
     quantity: float
     order_id: Optional[str] = None   # 关联的订单（执行后填充）
+    # 该腿可成交流动性（USD），从机会传入。执行引擎据此「先难后易」排序执行。
+    available_liquidity_usd: Optional[float] = None
 
     @field_validator("target_price")
     @classmethod

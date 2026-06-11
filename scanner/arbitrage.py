@@ -195,6 +195,7 @@ class ArbitrageEngine:
                 outcome=leg.outcome_name,
                 side="buy",
                 price=leg.ask,
+                available_liquidity_usd=leg.liquidity_usd,
             )
             for leg in chosen
         ]
