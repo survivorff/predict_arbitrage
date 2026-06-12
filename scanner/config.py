@@ -181,6 +181,8 @@ class RiskConfig(BaseModel):
     max_slippage: float = 0.02
     min_net_profit_margin: float = 0.02
     max_data_age_seconds: float = 30.0
+    bankroll_usd: float = 0.0
+    max_bankroll_fraction: float = 0.25
     dry_run: bool = True
     require_confirmation: bool = True
 
@@ -195,6 +197,8 @@ class RiskConfig(BaseModel):
             max_slippage=self.max_slippage,
             min_net_profit_margin=self.min_net_profit_margin,
             max_data_age_seconds=self.max_data_age_seconds,
+            bankroll_usd=self.bankroll_usd,
+            max_bankroll_fraction=self.max_bankroll_fraction,
             dry_run=self.dry_run,
             require_confirmation=self.require_confirmation,
         )

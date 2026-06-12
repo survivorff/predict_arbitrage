@@ -132,10 +132,16 @@ platforms:
       type: kalshi
 
 alerts:
-  # Delivery channels. "log" writes alerts to the application log. "webhook"
-  # is also supported when SCANNER_WEBHOOK_URL is set.
+  # Delivery channels（实时告警，P0：机会几分钟即逝，告警是命脉）。
+  #   "log"      —— 写应用日志。
+  #   "webhook"  —— 需环境变量 SCANNER_WEBHOOK_URL。
+  #   "telegram" —— 需环境变量 TELEGRAM_BOT_TOKEN（@BotFather）+ TELEGRAM_CHAT_ID。
+  #   "lark"     —— 需环境变量 LARK_WEBHOOK_URL（飞书群自定义机器人）。
+  # 凭证只经环境变量注入，绝不写入配置/日志。缺失则该通道优雅降级（跳过）。
   channels:
     - log
+    # - telegram
+    # - lark
   criteria:
     # Only alert on opportunities whose net profit margin meets this threshold.
     min_net_profit_margin: 0.02
@@ -154,5 +160,11 @@ risk:
   max_slippage: 0.02               # max allowed price deviation from signal price
   min_net_profit_margin: 0.02      # minimum net margin to trade
   max_data_age_seconds: 30.0       # reject signals older than this
+  # Bankroll fraction cap (¼-Kelly style, P0). Caps each single trade to a fraction
+  # of your bankroll, to bound drawdown if a "supposedly risk-free" arb fails (leg
+  # risk / resolution mismatch). Set bankroll_usd to your investable capital.
+  # bankroll_usd: 0 (default) disables this cap entirely.
+  bankroll_usd: 0.0                # your investable capital in USD (0 = disabled)
+  max_bankroll_fraction: 0.25      # max fraction of bankroll per single trade
   dry_run: true                    # SAFETY: true = never submit real orders
   require_confirmation: true       # require human confirmation before execution

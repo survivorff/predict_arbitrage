@@ -142,6 +142,69 @@ async def _default_sleep(seconds: float) -> None:  # pragma: no cover - thin wra
     await asyncio.sleep(seconds)
 
 
+def format_alert_text(alert: "Alert") -> str:
+    """把告警格式化为人类可读的纯文本（Telegram/Lark 共用）。
+
+    机会几分钟即逝，告警须一眼可判：事件、平台、净利润率、时间。刻意精简、可直接转发。
+    """
+    return (
+        "🔔 跨平台套利信号\n"
+        f"事件：{alert.event_title}\n"
+        f"平台：{' × '.join(alert.platforms)}\n"
+        f"净利润率：{alert.net_profit_margin * 100:.2f}%\n"
+        f"检测时间：{alert.detected_at.isoformat()}\n"
+        f"组：{alert.group_id}\n"
+        "⚠️ 请在下单前核对两市场是否为同一事件（结算口径/日期/极性）。"
+    )
+
+
+@dataclass
+class TelegramChannel:
+    """把告警推送到 Telegram 的 :class:`AlertChannel`（P0 实时告警）。
+
+    通过 Bot API ``sendMessage`` 发送。``token``（@BotFather 获取）与 ``chat_id`` 只经
+    环境变量注入、绝不入库/入日志。``client`` 可注入以便测试（respx）与连接池复用。
+    """
+
+    token: str
+    chat_id: str
+    client: Optional[httpx.AsyncClient] = None
+    timeout: float = 10.0
+
+    async def send(self, alert: Alert) -> None:
+        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        payload = {"chat_id": self.chat_id, "text": format_alert_text(alert)}
+        if self.client is not None:
+            resp = await self.client.post(url, json=payload, timeout=self.timeout)
+            resp.raise_for_status()
+            return
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, json=payload, timeout=self.timeout)
+            resp.raise_for_status()
+
+
+@dataclass
+class LarkChannel:
+    """把告警推送到飞书/Lark 群机器人的 :class:`AlertChannel`（P0 实时告警）。
+
+    POST 到群自定义机器人的 ``webhook`` URL（只经环境变量注入）。发送纯文本消息。
+    """
+
+    webhook_url: str
+    client: Optional[httpx.AsyncClient] = None
+    timeout: float = 10.0
+
+    async def send(self, alert: Alert) -> None:
+        payload = {"msg_type": "text", "content": {"text": format_alert_text(alert)}}
+        if self.client is not None:
+            resp = await self.client.post(self.webhook_url, json=payload, timeout=self.timeout)
+            resp.raise_for_status()
+            return
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(self.webhook_url, json=payload, timeout=self.timeout)
+            resp.raise_for_status()
+
+
 @dataclass
 class AlertService:
     """Matches new opportunities to criteria and delivers alerts with retry.
@@ -267,5 +330,8 @@ __all__ = [
     "AlertChannel",
     "LogChannel",
     "WebhookChannel",
+    "TelegramChannel",
+    "LarkChannel",
+    "format_alert_text",
     "AlertService",
 ]

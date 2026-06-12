@@ -48,7 +48,9 @@ from scanner.alerts import (
     AlertChannel,
     AlertCriteria,
     AlertService,
+    LarkChannel,
     LogChannel,
+    TelegramChannel,
     WebhookChannel,
     _default_sleep,
 )
@@ -202,6 +204,26 @@ def build_alert_channels(channel_names: Sequence[str]) -> List[AlertChannel]:
                 logger.warning(
                     "Webhook alert channel configured but SCANNER_WEBHOOK_URL "
                     "is unset; skipping webhook channel."
+                )
+        elif key == "telegram":
+            # 凭证只经环境变量注入，绝不入配置/日志。缺失则优雅降级（跳过该通道）。
+            token = os.environ.get("TELEGRAM_BOT_TOKEN")
+            chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+            if token and chat_id:
+                channels.append(TelegramChannel(token=token, chat_id=chat_id))
+            else:
+                logger.warning(
+                    "Telegram alert channel configured but TELEGRAM_BOT_TOKEN / "
+                    "TELEGRAM_CHAT_ID is unset; skipping telegram channel."
+                )
+        elif key == "lark":
+            webhook = os.environ.get("LARK_WEBHOOK_URL")
+            if webhook:
+                channels.append(LarkChannel(webhook_url=webhook))
+            else:
+                logger.warning(
+                    "Lark alert channel configured but LARK_WEBHOOK_URL is unset; "
+                    "skipping lark channel."
                 )
         else:
             logger.warning("Unknown alert channel %r; skipping.", name)

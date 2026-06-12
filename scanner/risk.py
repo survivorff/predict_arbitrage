@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from scanner.models import ArbitrageOpportunity
+from scanner.sizing import bankroll_cap_usd
 
 
 # 滑点观测价的键:(platform, market_id, outcome) -> 实际可成交价。
@@ -52,6 +53,10 @@ class RiskLimits:
     max_slippage: float = 0.02                 # 允许的价格偏离(绝对值,概率单位)
     min_net_profit_margin: float = 0.02        # 最小净利润率门槛
     max_data_age_seconds: float = 30.0         # 信号最大数据年龄
+    # bankroll 分数上限（¼-Kelly 风格，P0）：单笔最多投入 bankroll 的比例，防止单笔
+    # 「看似稳赚」出错造成重大回撤。bankroll_usd<=0 表示不启用（默认，行为不变）。
+    bankroll_usd: float = 0.0
+    max_bankroll_fraction: float = 0.25
     dry_run: bool = True                       # 默认 dry-run(不真正下单)
     require_confirmation: bool = True          # 默认需人工确认
 
@@ -190,12 +195,17 @@ class RiskManager:
         # 不足时直接拦截而非悄悄缩小规模，风控语义更清晰）。
         remaining_market = limits.max_market_exposure_usd - market_exposure_usd
         remaining_total = limits.max_total_exposure_usd - current_total_exposure_usd
-        approved_size = min(
+        size_caps = [
             opportunity.recommended_size_usd,
             limits.max_trade_size_usd,
             remaining_market,
             remaining_total,
-        )
+        ]
+        # bankroll 分数上限（¼-Kelly 风格）：单笔不超过 bankroll×fraction（启用时）。
+        bcap = bankroll_cap_usd(limits.bankroll_usd, limits.max_bankroll_fraction)
+        if bcap != float("inf"):
+            size_caps.append(bcap)
+        approved_size = min(size_caps)
         approved_size = max(0.0, approved_size)
 
         # 规则 4:单笔规模上限(核准规模受单笔上限约束;若被压到 0 则拦截)。
@@ -229,6 +239,17 @@ class RiskManager:
                 f"（已用 ${current_total_exposure_usd:.2f} / 上限 ${limits.max_total_exposure_usd:.2f}）",
             )
         )
+
+        # bankroll 分数上限检查（仅当启用 bankroll 时；解释核准规模是否受其约束）。
+        if bcap != float("inf"):
+            checks.append(
+                RiskCheck(
+                    "bankroll_fraction",
+                    approved_size > 0,
+                    f"bankroll 上限 ${bcap:.2f}"
+                    f"（${limits.bankroll_usd:.2f} × {limits.max_bankroll_fraction:.0%}）",
+                )
+            )
 
         # 规则 7:余额充足(仅当提供余额时校验)——余额必须覆盖核准规模,不足则拦截。
         if available_balance_usd is not None:

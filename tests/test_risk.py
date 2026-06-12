@@ -226,3 +226,26 @@ def test_rejected_reasons_lists_failures():
 def test_negative_limit_raises():
     with pytest.raises(ValueError):
         RiskLimits(max_trade_size_usd=-1.0)
+
+
+# --------------------------------------------------------------------------- #
+# bankroll 分数上限（¼-Kelly 风格）
+# --------------------------------------------------------------------------- #
+
+def test_bankroll_fraction_caps_approved_size():
+    # bankroll 2000 × 25% = 500，但机会建议 1000、单笔上限也放宽 → 核准被压到 500。
+    rm = RiskManager(RiskLimits(
+        max_trade_size_usd=2000.0, max_market_exposure_usd=5000.0,
+        max_total_exposure_usd=10000.0, bankroll_usd=2000.0, max_bankroll_fraction=0.25,
+    ))
+    d = rm.evaluate(_opp(size=1000.0))
+    assert d.approved is True
+    assert d.approved_size_usd == 500.0
+    assert any(c.name == "bankroll_fraction" for c in d.checks)
+
+
+def test_bankroll_disabled_by_default_no_check():
+    # 默认 bankroll_usd=0 → 不启用，无 bankroll_fraction 检查，行为不变。
+    rm = RiskManager(RiskLimits())
+    d = rm.evaluate(_opp(size=50.0))
+    assert all(c.name != "bankroll_fraction" for c in d.checks)

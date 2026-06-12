@@ -340,3 +340,50 @@ async def test_log_channel_emits_record(caplog):
         await channel.send(alert)
     assert any("Logged Event" in rec.message or "Logged Event" in rec.getMessage()
                for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# TelegramChannel / LarkChannel（P0 实时告警）
+# ---------------------------------------------------------------------------
+
+@respx.mock
+async def test_telegram_channel_posts_sendmessage():
+    from scanner.alerts import TelegramChannel
+    route = respx.post("https://api.telegram.org/botTOK/sendMessage").mock(
+        return_value=httpx.Response(200)
+    )
+    alert = Alert.from_opportunity(_opp("g1", 0.0312, title="外星人事件"))
+    async with httpx.AsyncClient() as client:
+        ch = TelegramChannel(token="TOK", chat_id="123", client=client)
+        await ch.send(alert)
+    assert route.called
+    import json
+    body = json.loads(route.calls.last.request.content)
+    assert body["chat_id"] == "123"
+    assert "外星人事件" in body["text"]
+    assert "3.12%" in body["text"]  # 净利润率格式化
+
+
+@respx.mock
+async def test_lark_channel_posts_text():
+    from scanner.alerts import LarkChannel
+    route = respx.post("https://open.larksuite.com/hook/abc").mock(
+        return_value=httpx.Response(200)
+    )
+    alert = Alert.from_opportunity(_opp("g1", 0.05, title="事件Y"))
+    async with httpx.AsyncClient() as client:
+        ch = LarkChannel(webhook_url="https://open.larksuite.com/hook/abc", client=client)
+        await ch.send(alert)
+    assert route.called
+    import json
+    body = json.loads(route.calls.last.request.content)
+    assert body["msg_type"] == "text"
+    assert "事件Y" in body["content"]["text"]
+
+
+def test_format_alert_text_contains_key_fields():
+    from scanner.alerts import format_alert_text
+    alert = Alert.from_opportunity(_opp("g1", 0.042, platforms=["polymarket", "predictfun"], title="Z"))
+    text = format_alert_text(alert)
+    assert "Z" in text and "polymarket" in text and "predictfun" in text
+    assert "4.20%" in text
