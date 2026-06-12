@@ -566,6 +566,8 @@ def build_application(
         SqliteHistoryStore(
             settings.history_store_path,
             retention_days=settings.history_retention_days,
+            sample_interval_seconds=settings.history_sample_interval_seconds,
+            min_price_delta=settings.history_min_price_delta,
             clock=clock if clock is not None else _utc_now,
         )
         if settings.history_store_path

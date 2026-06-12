@@ -293,3 +293,42 @@ async def test_real_adapter_dry_run_pnl_summary_empty():
     await svc.confirm(plan.plan_id)
     summary = svc.pnl_summary()
     assert summary["executed_trades"] == 0  # 真实适配器 dry-run 不成交
+
+
+# --------------------------------------------------------------------------- #
+# 紧急停机开关（kill switch）
+# --------------------------------------------------------------------------- #
+
+def test_halt_blocks_new_proposals():
+    """停机后 propose 不再生成任何新计划。"""
+    svc = _service()
+    svc.halt(reason="test")
+    assert svc.is_halted is True
+    assert svc.propose([_opp(margin=0.10)]) == []
+    # 恢复后又能生成。
+    svc.resume()
+    assert svc.is_halted is False
+    assert len(svc.propose([_opp(margin=0.10)])) == 1
+
+
+async def test_halt_blocks_confirm_execution():
+    """停机后确认计划被拒绝（PermissionError），不触发任何执行。"""
+    svc = _service()
+    [plan] = svc.propose([_opp()])
+    svc.halt(reason="emergency")
+    import pytest
+    with pytest.raises(PermissionError):
+        await svc.confirm(plan.plan_id)
+    # 计划仍停留在待确认（未被执行）。
+    assert svc.get_plan(plan.plan_id).status is TradePlanStatus.PENDING_CONFIRMATION
+
+
+def test_halt_state_and_idempotency():
+    """halt/resume 幂等，halt_state 反映状态。"""
+    svc = _service()
+    assert svc.halt_state()["halted"] is False
+    svc.halt(reason="r1"); svc.halt(reason="r2")  # 幂等：第二次不覆盖原因
+    st = svc.halt_state()
+    assert st["halted"] is True and st["reason"] == "r1" and st["halted_at"] is not None
+    svc.resume(); svc.resume()
+    assert svc.halt_state()["halted"] is False

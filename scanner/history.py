@@ -84,10 +84,24 @@ class SqliteHistoryStore:
         path: str = "history.db",
         *,
         retention_days: float = 7.0,
+        sample_interval_seconds: float = 60.0,
+        min_price_delta: float = 0.005,
+        max_gap_seconds: float = 900.0,
         clock=_utc_now,
     ) -> None:
         self._path = path
         self._retention = timedelta(days=retention_days)
+        # 市场价历史**降采样**参数（控制 history.db 膨胀，是关键的健壮性修复）：
+        #   sample_interval_seconds：同一市场两次采样的最小间隔（避免每个刷新周期都写）。
+        #   min_price_delta：价格变化小于此值视为「未变」，不写新点（去掉海量平线点）。
+        #   max_gap_seconds：即使价格未变，超过此间隔也强制写一点（保持时间连续性）。
+        # 旧实现每周期每市场写一行（~360 行/30s ≈ 7M 行/周），且每行存完整标题，导致
+        # history.db 膨胀到数百 MB。降采样 + 去重后，稳定市场几乎不写，库大小可控。
+        self._sample_interval = float(sample_interval_seconds)
+        self._min_delta = float(min_price_delta)
+        self._max_gap = float(max_gap_seconds)
+        # 每市场最近一次「已记录」的 (时间, 价格)，用于降采样判定（内存态，重启清空）。
+        self._last: "dict[tuple, tuple]" = {}
         self._clock = clock
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
@@ -107,6 +121,8 @@ class SqliteHistoryStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_opp_hist_group
                     ON opportunity_history(group_id, ts);
+                CREATE INDEX IF NOT EXISTS idx_opp_hist_ts
+                    ON opportunity_history(ts);
                 CREATE TABLE IF NOT EXISTS market_price_history (
                     id        INTEGER PRIMARY KEY AUTOINCREMENT,
                     platform  TEXT NOT NULL,
@@ -117,6 +133,8 @@ class SqliteHistoryStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_mkt_hist_key
                     ON market_price_history(platform, market_id, ts);
+                CREATE INDEX IF NOT EXISTS idx_mkt_hist_ts
+                    ON market_price_history(ts);
                 """
             )
             self._conn.commit()
@@ -145,15 +163,40 @@ class SqliteHistoryStore:
             price = yes.price if yes is not None else (m.outcomes[0].price if m.outcomes else None)
             if price is None:
                 continue
+            # 降采样：跳过「过于频繁」或「价格几乎未变」的点，仅在变化显著或超过最大间隔时写。
+            if not self._should_record(m.platform, m.market_id, price, now):
+                continue
+            self._last[(m.platform, m.market_id)] = (now, price)
             rows.append((m.platform, m.market_id, m.title, price, iso))
-        if not rows:
-            return
-        with self._lock:
-            self._conn.executemany(
-                "INSERT INTO market_price_history (platform, market_id, label, price, ts) VALUES (?, ?, ?, ?, ?)",
-                rows,
-            )
-            self._conn.commit()
+        if rows:
+            with self._lock:
+                self._conn.executemany(
+                    "INSERT INTO market_price_history (platform, market_id, label, price, ts) VALUES (?, ?, ?, ?, ?)",
+                    rows,
+                )
+                self._conn.commit()
+        # 即使本轮无新行也要裁剪——保证保留窗口生效（旧实现仅在记录机会时裁剪，
+        # 多数周期 0 机会 → market 表从不裁剪 → 无限膨胀）。ts 已建索引，裁剪高效。
+        self._prune(now)
+
+    def _should_record(
+        self, platform: str, market_id: str, price: float, now: datetime
+    ) -> bool:
+        """降采样判定：是否应为该市场写入一个新的价格点。
+
+        首次出现必记；否则需满足「距上次记录 ≥ 采样间隔」，且「价格变化 ≥ 阈值」或
+        「距上次记录 ≥ 最大间隔（强制保点以维持时间连续性）」。
+        """
+        last = self._last.get((platform, market_id))
+        if last is None:
+            return True
+        last_at, last_price = last
+        dt = (now - last_at).total_seconds()
+        if dt < self._sample_interval:
+            return False
+        if abs(price - last_price) >= self._min_delta:
+            return True
+        return dt >= self._max_gap
 
     def opportunity_series(self, group_id: str, *, limit: int = 500) -> List[HistoryPoint]:
         with self._lock:

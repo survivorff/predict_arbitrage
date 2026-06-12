@@ -139,6 +139,10 @@ class ScannerSettings(BaseModel):
     # （如 "history.db"）则记录每周期的机会净利润率与市场价格时间序列，供趋势图/回看。
     history_store_path: Optional[str] = None
     history_retention_days: float = 7.0  # 历史保留窗口（天）
+    # 市场价历史降采样（控制 history.db 膨胀）：采样最小间隔(秒) + 价格变化阈值。
+    # 默认 60s + 0.005（0.5¢）：稳定市场几乎不写，库大小可控。
+    history_sample_interval_seconds: float = 60.0
+    history_min_price_delta: float = 0.005
     # 套利数据可靠性/可成交性闸门（真实数据驱动，防虚假套利）。
     #   max_implied_prob_divergence：同一事件两平台隐含 P(YES) 背离超过此值（绝对概率差，
     #     如 0.10=10个百分点）则跳过——大背离=定价脏/薄/结算口径不同，非真套利。None=不启用。

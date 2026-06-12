@@ -686,9 +686,33 @@ def create_app(
             plan = await trading_service.confirm(plan_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="plan not found")
+        except PermissionError as exc:
+            # 紧急停机(kill switch)期间拒绝执行 → 423 Locked。
+            raise HTTPException(status_code=423, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         return TradePlanResponse.from_model(plan)
+
+    @app.get("/trade/halt")
+    def get_trade_halt(_auth: None = Depends(_require_trade_auth)):
+        """紧急停机(kill switch)状态。未配置交易服务时返回 ``{"halted": false}``。"""
+        if trading_service is None:
+            return {"halted": False}
+        return trading_service.halt_state()
+
+    @app.post("/trade/halt")
+    def post_trade_halt(_auth: None = Depends(_require_trade_auth)):
+        """启用紧急停机：停止生成新计划并拒绝任何确认/执行（一键急停）。"""
+        if trading_service is None:
+            raise HTTPException(status_code=404, detail="trading service not configured")
+        return trading_service.halt(reason="manual via API")
+
+    @app.post("/trade/resume")
+    def post_trade_resume(_auth: None = Depends(_require_trade_auth)):
+        """解除紧急停机，恢复提议与执行。"""
+        if trading_service is None:
+            raise HTTPException(status_code=404, detail="trading service not configured")
+        return trading_service.resume()
 
     @app.post("/trade/plans/{plan_id}/reject", response_model=TradePlanResponse)
     def reject_trade_plan(plan_id: str, _auth: None = Depends(_require_trade_auth)):

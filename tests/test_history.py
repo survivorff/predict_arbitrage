@@ -392,3 +392,59 @@ def test_history_point_is_dataclass_with_expected_fields():
     assert point.label == "事件"
     assert point.value == 0.1
     assert point.at == BASE_TIME
+
+
+# --------------------------------------------------------------------------- #
+# 市场价历史降采样（控制 history.db 膨胀的健壮性修复）
+# --------------------------------------------------------------------------- #
+
+def _rec_price(store, price):
+    store.record_markets([_market("polymarket", "p1", outcomes=[Outcome(name="YES", price=price)])])
+
+
+def test_market_downsampling_skips_frequent_and_unchanged():
+    # 采样间隔 60s、阈值 0.01：过于频繁或价格几乎未变的点被跳过，只保留稀疏点。
+    clock = FakeClock()
+    store = SqliteHistoryStore(
+        ":memory:", sample_interval_seconds=60, min_price_delta=0.01,
+        max_gap_seconds=10000, clock=clock,
+    )
+    try:
+        _rec_price(store, 0.50)            # t0：首次 → 记录
+        clock.advance(30); _rec_price(store, 0.50)   # dt=30<60 → 跳过
+        clock.advance(30); _rec_price(store, 0.50)   # dt=60 但未变、未到 max_gap → 跳过
+        clock.advance(60); _rec_price(store, 0.55)   # dt=60 且变化 0.05≥0.01 → 记录
+        s = store.market_series("polymarket", "p1")
+        assert [round(p.value, 2) for p in s] == [0.50, 0.55]
+    finally:
+        store.close()
+
+
+def test_market_downsampling_forces_point_after_max_gap():
+    # 即使价格未变，超过 max_gap 也强制写一点（保持时间连续性）。
+    clock = FakeClock()
+    store = SqliteHistoryStore(
+        ":memory:", sample_interval_seconds=60, min_price_delta=0.01,
+        max_gap_seconds=120, clock=clock,
+    )
+    try:
+        _rec_price(store, 0.50)                       # t0 记录
+        clock.advance(150); _rec_price(store, 0.50)   # 未变但 dt=150≥max_gap=120 → 强制记录
+        assert len(store.market_series("polymarket", "p1")) == 2
+    finally:
+        store.close()
+
+
+def test_market_history_pruned_even_without_opportunities():
+    # 旧 bug：market 表只在记录机会时裁剪，0 机会周期从不裁剪 → 膨胀。
+    # 现 record_markets 自身裁剪：advance 超过保留窗口后再记录，旧点应被删。
+    clock = FakeClock()
+    store = SqliteHistoryStore(":memory:", retention_days=1.0, clock=clock)
+    try:
+        _rec_price(store, 0.50)                              # t0
+        assert len(store.market_series("polymarket", "p1")) == 1
+        clock.advance(2 * 24 * 3600); _rec_price(store, 0.60)  # 超过 1 天保留窗口
+        s = store.market_series("polymarket", "p1")
+        assert [round(p.value, 2) for p in s] == [0.60]      # 旧点被裁剪
+    finally:
+        store.close()

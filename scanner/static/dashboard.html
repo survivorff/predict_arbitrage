@@ -120,6 +120,14 @@
     .banner.ok { background:var(--green-bg); border:1px solid rgba(46,204,113,.3); }
     .banner.info { background:var(--blue-bg); border:1px solid rgba(91,141,239,.3); }
     a.opp-title:hover, a.row-link:hover { color:var(--blue); }
+
+    /* Market cards (matchr Markets 风格) */
+    .mkt-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; }
+    .mkt-card { background:var(--card); border:1px solid var(--border); border-radius:11px; padding:13px; display:flex; flex-direction:column; gap:9px; cursor:pointer; transition:.15s; }
+    .mkt-card:hover { border-color:var(--blue); }
+    .mkt-card-title { font-size:13px; font-weight:600; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:36px; }
+    .mkt-card-mid { display:flex; align-items:baseline; justify-content:space-between; }
+    .mkt-card-foot { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11px; color:var(--muted); }
   </style>
 </head>
 <body>
@@ -192,6 +200,7 @@
 
   <!-- 交易 -->
   <div class="panel" id="panel-trade">
+    <div class="card" style="padding:12px 16px"><div id="kill-switch"></div></div>
     <div class="card">
       <h2>交易计划 <span class="sub" id="pnl-summary" style="margin:0"></span></h2>
       <div class="sub">通过<b>风控</b>的机会生成待确认计划。当前默认 dry-run：确认走<b>模拟盘</b>真实建仓/核算收益，但<b>不动真钱</b>。「真实收益」列按实际成交价审计是否真赚。</div>
@@ -364,9 +373,51 @@ function router(){
   const det=$('detail');
   const mMatch=h.match(/^#\/match\/(.+)$/);
   const mMkt=h.match(/^#\/market\/([^/]+)\/(.+)$/);
+  const mPlan=h.match(/^#\/plan\/(.+)$/);
   if(mMatch){ det.style.display=''; renderMatchDetail(decodeURIComponent(mMatch[1])); window.scrollTo(0,0); }
   else if(mMkt){ det.style.display=''; renderMarketDetail(decodeURIComponent(mMkt[1]),decodeURIComponent(mMkt[2])); window.scrollTo(0,0); }
+  else if(mPlan){ det.style.display=''; renderPlanDetail(decodeURIComponent(mPlan[1])); window.scrollTo(0,0); }
   else { det.style.display='none'; det.innerHTML=''; }
+}
+const PLAN_LABEL2={pending_confirmation:'待确认',confirmed:'已确认',rejected:'已拒绝',executing:'执行中',completed:'已完成',failed:'失败'};
+async function renderPlanDetail(id){
+  const box=$('detail'); box.innerHTML=`<div class="detail-inner"><a class="back-btn" href="#">← 返回列表</a><div class="empty">加载交易计划…</div></div>`;
+  let p; try{ p=await getJSON('/trade/plans/'+encodeURIComponent(id)); }
+  catch(e){ box.innerHTML=`<div class="detail-inner"><a class="back-btn" href="#">← 返回列表</a><div class="empty err">加载失败：${esc(e.message)}</div></div>`; return; }
+  const pending=p.status==='pending_confirmation', failed=p.status==='failed', rejected=p.status==='rejected';
+  const STEPS=['pending_confirmation','confirmed','executing','completed'];
+  let curIdx=STEPS.indexOf(p.status); if(p.status==='completed')curIdx=3;
+  const stepLbl=['待确认','已确认','执行中','已完成'];
+  const steps=stepLbl.map((lbl,i)=>{ const done=!rejected&&i<=curIdx; return `<span class="${done?'pos':'muted'}">${done?'●':'○'} ${lbl}</span>`; }).join('<span class="muted"> → </span>');
+  const stepper=rejected?`<div class="banner warn">该计划已被人工拒绝。</div>`:(failed?`<div class="banner warn">⚠️ 执行失败（见下方备注，注意是否存在残余敞口）。</div>`:`<div class="dt-sub" style="margin-bottom:12px;font-size:14px">${steps}</div>`);
+  const legRows=p.legs.map((l,i)=>`<div class="kv"><span class="k">腿${i+1} · ${esc(l.platform)}</span><span>买 ${esc(l.outcome)} ${l.quantity.toFixed(2)} 份 @ ${cent(l.target_price)}¢${l.order_id?(' · 单 '+esc(l.order_id)):''}</span></div>`).join('');
+  let pnlHtml='<div class="dt-sub">尚未执行核算（确认后按实际成交价核算）。</div>';
+  if(p.realized_profit_usd!=null){ const g=p.genuinely_profitable;
+    pnlHtml=`<div class="kv"><span class="k">实际成本</span><span>${fmtUsd(p.filled_cost_usd)}</span></div>
+    <div class="kv"><span class="k">结算赔付</span><span>${fmtUsd(p.expected_payoff_usd)}</span></div>
+    <div class="kv"><span class="k">已实现收益</span><span class="${g?'pos':'neg'}">${fmtUsd(p.realized_profit_usd)}${p.realized_profit_margin!=null?(' ('+pct(p.realized_profit_margin)+')'):''}</span></div>
+    <div class="banner ${g?'ok':'warn'}" style="margin-top:8px;margin-bottom:0">${g?'✓ 按实际成交价：真实盈利':'✗ 按实际成交价：实亏（滑点/费用吃掉了套利空间）'}</div>`; }
+  const actions=pending?`<div class="toolbar" style="margin-top:12px"><button class="primary" id="pd-confirm">确认（模拟盘执行，不动真钱）</button><button class="danger" id="pd-reject">拒绝</button><button id="pd-preview">预览订单</button></div>`:'';
+  box.innerHTML=`<div class="detail-inner">
+    <a class="back-btn" href="#">← 返回列表</a>
+    <div class="dt-head"><div><div class="dt-title">${esc(p.event_title)}</div>
+      <div class="dt-sub">计划 ${esc(p.plan_id)} · <a class="row-link" href="#/match/${encodeURIComponent(p.group_id)}">查看匹配详情 →</a></div></div>
+      <span class="pill ${p.status==='completed'?'sustained':(pending?'open':'closed')}">${PLAN_LABEL2[p.status]||p.status}</span></div>
+    ${stepper}
+    <div class="dt-cols">
+      <div class="dt-plat-card"><h3>计划</h3>
+        <div class="kv"><span class="k">检测净利润率</span><span class="pos">${pct(p.expected_net_profit_margin)}</span></div>
+        <div class="kv"><span class="k">投入规模</span><span>${fmtUsd(p.size_usd)}</span></div>
+        ${legRows}</div>
+      <div class="dt-plat-card"><h3>真实收益核算</h3>${pnlHtml}</div>
+    </div>
+    ${p.notes?`<div class="card" style="margin-top:14px"><h2>执行 / 风控备注</h2><div class="dt-sub" style="white-space:pre-wrap;font-size:13px">${esc(p.notes)}</div></div>`:''}
+    ${actions}
+    <div class="banner info" style="margin-top:12px">当前默认 <b>dry-run</b>：确认走<b>模拟盘</b>真实建仓与收益核算，<b>不动真钱</b>。真实下单需先完成真实执行适配器，届时由钱包 EIP-712 签名、私钥不离浏览器。</div>
+  </div>`;
+  const cb=$('pd-confirm'); if(cb)cb.addEventListener('click',()=>actOnPlan(p.plan_id,'confirm'));
+  const rb=$('pd-reject'); if(rb)rb.addEventListener('click',()=>actOnPlan(p.plan_id,'reject'));
+  const pb=$('pd-preview'); if(pb)pb.addEventListener('click',()=>previewOrder(p.plan_id));
 }
 
 // ---- 顶部统计条 ----
@@ -526,41 +577,25 @@ function renderMarkets(){
   if(q) mk=mk.filter(m=>m.title.toLowerCase().includes(q)||m.market_id.toLowerCase().includes(q));
   mk=sortBy(mk,state.mktSort,state.mktDir);
   $('mkt-count').innerHTML=`显示 ${Math.min(mk.length,100)}/${mk.length} · `+freshnessLabel(all.length?Math.max(...all.map(m=>m.data_age_seconds||0)):null);
-  const shown=mk.slice(0,100);
+  const shown=mk.slice(0,90);
   if(!shown.length){ $('markets').innerHTML='<div class="empty">无匹配市场</div>'; return; }
-  let rows='';
+  let cards='';
   for(const m of shown){
     const yes=m.outcomes.find(o=>o.name.toUpperCase()==='YES')||m.outcomes[0];
+    const no=m.outcomes.find(o=>o.name.toUpperCase()==='NO');
     const key=encodeURIComponent(m.platform)+'/'+encodeURIComponent(m.market_id);
     const ct=m.category?`<span class="cat">${esc(catLabel(m.category))}</span>`:'';
-    rows+=`<tr class="clickable mkt-row" data-key="${key}"><td><a class="row-link" href="#/market/${key}">${esc(m.title)}</a> ${ct}</td><td class="muted">${esc(m.platform)}</td>
-      <td class="num">${yes?cent(yes.price)+'¢':'–'}</td><td class="num">${fmtUsd(m.volume_usd)}</td><td class="num">${fmtUsd(m.liquidity_usd)}</td><td class="num muted">${m.data_age_seconds?.toFixed?.(0)??'–'}s</td></tr>`;
+    cards+=`<a class="mkt-card" href="#/market/${key}">
+      <div class="mkt-card-title">${esc(m.title)}</div>
+      <div class="mkt-card-mid"><div class="px">${yes?cent(yes.price):'–'}<span class="cent">¢ YES</span></div>
+        <div class="muted" style="font-size:12px">NO ${no?cent(no.price)+'¢':'–'}</div></div>
+      <div class="mkt-card-foot"><span class="plat ${esc(m.platform)}">${esc(m.platform)}</span> ${ct}
+        <span>量 ${fmtUsd(m.volume_usd)} · 流 ${fmtUsd(m.liquidity_usd)}</span></div>
+    </a>`;
   }
-  $('markets').innerHTML=`<div class="card" style="margin:0;padding:0"><table><thead><tr><th>标题（点击看详情）</th><th>平台</th><th class="num">YES价</th><th class="num">成交量</th><th class="num">流动性</th><th class="num">年龄</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-  document.querySelectorAll('.mkt-row').forEach(r=>r.addEventListener('click',(e)=>{ if(e.target.tagName!=='A') navTo('#/market/'+r.dataset.key); }));
+  $('markets').innerHTML=`<div class="mkt-grid">${cards}</div>`;
 }
 function navTo(h){ location.hash=h; }
-async function toggleMarketDetail(key){
-  const d=document.querySelector(`.mkt-detail[data-detail="${key}"]`); if(!d)return;
-  if(d.style.display!=='none'){ d.style.display='none'; return; }
-  d.style.display=''; const box=d.querySelector('.ob-box');
-  try{
-    const m=await getJSON('/markets/'+key);
-    let h='<div class="ob">';
-    for(const o of m.outcomes){ h+=`<div class="side"><h4>${esc(o.name)}</h4>
-      <div class="lvl"><span>买价</span><span>${o.bid!=null?cent(o.bid)+'¢':'–'}</span></div>
-      <div class="lvl"><span>卖价</span><span>${o.ask!=null?cent(o.ask)+'¢':'–'}</span></div>
-      <div class="lvl"><span>价格</span><span>${cent(o.price)}¢</span></div>
-      <div class="lvl"><span>流动性</span><span>${fmtUsd(o.available_liquidity_usd)}</span></div></div>`; }
-    h+='</div>';
-    h+=`<div class="muted" style="margin-top:8px">费率 ${m.fee_rate!=null?(m.fee_rate*100).toFixed(2)+'%':'–'} · 成交量 ${fmtUsd(m.volume_usd)} · 流动性 ${fmtUsd(m.liquidity_usd)}</div>`;
-    h+='<div class="mkt-chart muted" style="margin-top:8px">加载价格走势…</div>';
-    box.innerHTML=h;
-    try{ const pts=await getJSON('/markets/'+key+'/history?limit=200');
-      box.querySelector('.mkt-chart').innerHTML = pts.length>=2?sparkline(pts.map(p=>p.value),'YES 价走势'):'<span class="muted">价格历史不足</span>';
-    }catch(e){}
-  }catch(e){ box.innerHTML='<span class="err">加载失败</span>'; }
-}
 
 // ---- 信号 ----
 function renderSignals(sigs){
@@ -586,7 +621,7 @@ function renderPlans(plans){
     const actions=pending?`<button class="sm primary" data-confirm="${esc(p.plan_id)}">确认</button> <button class="sm danger" data-reject="${esc(p.plan_id)}">拒绝</button> <button class="sm" data-preview="${esc(p.plan_id)}">预览</button>`:'<span class="muted">—</span>';
     let pnl='<span class="muted">—</span>';
     if(p.realized_profit_usd!=null){ const g=p.genuinely_profitable; pnl=`<span class="${g?'pos':'neg'}">${g?'✓ 真盈利':'✗ 实亏'} ${fmtUsd(p.realized_profit_usd)}</span>`; }
-    rows+=`<tr><td>${esc(p.event_title)}</td><td><span class="pill ${p.status==='completed'?'sustained':(pending?'open':'closed')}">${PLAN_LABEL[p.status]||p.status}</span></td>
+    rows+=`<tr><td><a class="row-link" href="#/plan/${encodeURIComponent(p.plan_id)}">${esc(p.event_title)}</a></td><td><span class="pill ${p.status==='completed'?'sustained':(pending?'open':'closed')}">${PLAN_LABEL[p.status]||p.status}</span></td>
       <td class="num pos">${pct(p.expected_net_profit_margin)}</td><td class="num">${fmtUsd(p.size_usd)}</td><td>${pnl}</td><td class="muted" style="font-size:12px">${legs}</td><td>${actions}</td></tr>`;
   }
   $('plans').innerHTML=`<table><thead><tr><th>事件</th><th>状态</th><th class="num">检测利润率</th><th class="num">规模</th><th>真实收益</th><th>双腿</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
@@ -598,6 +633,27 @@ async function actOnPlan(id,action){
   const verb=action==='confirm'?'确认':'拒绝';
   if(!confirm(`${verb}该交易计划？（dry-run 模拟盘，不动真钱）`))return;
   try{ const r=await fetch(`/trade/plans/${encodeURIComponent(id)}/${action}`,{method:'POST'}); if(!r.ok)throw new Error('HTTP '+r.status); await refresh(); }
+  catch(e){ alert(verb+'失败：'+e.message); }
+}
+async function renderKillSwitch(){
+  const box=$('kill-switch'); if(!box)return;
+  let st; try{ st=await getJSON('/trade/halt'); }catch(e){ box.innerHTML='<span class="muted">交易服务未配置</span>'; return; }
+  if(st.halted){
+    box.innerHTML=`<div class="banner warn" style="margin:0;display:flex;justify-content:space-between;align-items:center;gap:12px">
+      <span>⛔ <b>交易已紧急停机</b>（${esc(st.reason||'')}${st.halted_at?(' · '+ago(st.halted_at)):''}）：不生成新计划、拒绝任何确认/执行。</span>
+      <button class="sm primary" id="ks-resume">解除停机</button></div>`;
+    const b=$('ks-resume'); if(b)b.addEventListener('click',()=>killSwitch('resume'));
+  } else {
+    box.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+      <span class="muted">✅ 交易正常。紧急情况可<b>一键停机</b>：立即停止生成新计划并拒绝所有确认/执行（真实下单前的必备急停）。</span>
+      <button class="sm danger" id="ks-halt">⛔ 紧急停机</button></div>`;
+    const b=$('ks-halt'); if(b)b.addEventListener('click',()=>killSwitch('halt'));
+  }
+}
+async function killSwitch(action){
+  const verb=action==='halt'?'紧急停机':'解除停机';
+  if(!confirm(`确认${verb}？`))return;
+  try{ const r=await fetch('/trade/'+action,{method:'POST'}); if(!r.ok)throw new Error('HTTP '+r.status); await refresh(); }
   catch(e){ alert(verb+'失败：'+e.message); }
 }
 async function previewOrder(id){
@@ -698,6 +754,7 @@ async function refresh(){
     renderHealth(h); renderMetrics(m); renderStats();
     renderOpps(); renderGroups(); renderMarkets(); renderSignals(sigs);
     try{ renderPlans(await getJSON('/trade/plans')); }catch(e){ renderPlans([]); }
+    renderKillSwitch();
     try{ const pnl=await getJSON('/trade/pnl'); if(pnl&&pnl.executed_trades>0){ const cls=pnl.total_realized_profit_usd>=0?'pos':'neg'; $('pnl-summary').innerHTML=`· 已执行 ${pnl.executed_trades} · 真盈利 ${pnl.profitable_trades}/亏损 ${pnl.losing_trades} · 累计 <span class="${cls}">${fmtUsd(pnl.total_realized_profit_usd)}</span>`; } else $('pnl-summary').textContent=''; }catch(e){}
     renderAccount();
     $('updated').textContent='更新于 '+new Date().toLocaleTimeString();

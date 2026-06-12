@@ -82,6 +82,43 @@ class TradingService:
         self._clock = clock
         # group_id -> 最近一次被拒的风控决策(供呈现,不持久化)。
         self._rejections: Dict[str, RiskDecision] = {}
+        # 紧急停机开关(kill switch):停机时**不生成新计划、且拒绝确认/执行任何计划**,
+        # 作为真实下单前必备的一键急停。停机不影响只读查询与已有计划的展示。
+        self._halted: bool = False
+        self._halt_reason: Optional[str] = None
+        self._halted_at: Optional[datetime] = None
+
+    # -- 紧急停机开关(kill switch) ---------------------------------------- #
+
+    @property
+    def is_halted(self) -> bool:
+        return self._halted
+
+    def halt(self, reason: str = "manual") -> Dict[str, object]:
+        """启用紧急停机:停止生成新计划并拒绝任何执行。幂等。"""
+        if not self._halted:
+            self._halted = True
+            self._halt_reason = reason
+            self._halted_at = self._clock()
+            logger.warning("⛔ 交易已紧急停机(kill switch):%s", reason)
+        return self.halt_state()
+
+    def resume(self) -> Dict[str, object]:
+        """解除紧急停机,恢复提议与执行。幂等。"""
+        if self._halted:
+            logger.warning("交易已从紧急停机恢复(此前原因:%s)。", self._halt_reason)
+        self._halted = False
+        self._halt_reason = None
+        self._halted_at = None
+        return self.halt_state()
+
+    def halt_state(self) -> Dict[str, object]:
+        """当前停机状态(供 API/仪表盘展示)。"""
+        return {
+            "halted": self._halted,
+            "reason": self._halt_reason,
+            "halted_at": self._halted_at.isoformat() if self._halted_at else None,
+        }
 
     # -- 提议(每周期) ----------------------------------------------------- #
 
@@ -100,6 +137,9 @@ class TradingService:
             本次**新生成**的待确认计划列表(已通过风控且此前无进行中计划的 group)。
         """
         market_exposure_usd = market_exposure_usd or {}
+        # 紧急停机时不生成任何新计划（一键急停的第一道闸）。
+        if self._halted:
+            return []
         # 自核算当前敞口（若调用方未显式提供则用存储里的进行中/已完成计划估算），
         # 使总敞口/单市场敞口上限真正生效——此前 propose 不传敞口，上限形同虚设。
         plans = self.store.list_plans()
@@ -180,6 +220,11 @@ class TradingService:
         plan = self.store.get_plan(plan_id)
         if plan is None:
             raise KeyError(f"计划不存在:{plan_id}")
+        # 紧急停机时拒绝执行（一键急停的第二道闸，挡住真正动钱的环节）。
+        if self._halted:
+            raise PermissionError(
+                f"交易已紧急停机（{self._halt_reason or 'manual'}），拒绝确认/执行计划 {plan_id}"
+            )
         if plan.status is not TradePlanStatus.PENDING_CONFIRMATION:
             raise ValueError(
                 f"计划 {plan_id} 不可确认(当前状态 {plan.status.value})"
