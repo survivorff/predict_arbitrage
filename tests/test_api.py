@@ -362,3 +362,29 @@ def test_put_alert_config_updates_in_memory(client):
     assert follow.json()["min_net_profit_margin"] == 0.15
     assert follow.json()["min_match_confidence"] == 0.8
     assert follow.json()["platforms"] == ["polymarket"]
+
+
+# ---------------------------------------------------------------------------
+# /config/sizing（bankroll/¼-Kelly 建议仓位配置，供前端计算建议投入）
+# ---------------------------------------------------------------------------
+
+def test_sizing_config_default(client):
+    # 未传 sizing_config → 默认 bankroll=0（不约束）。
+    r = client.get("/config/sizing")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["bankroll_usd"] == 0.0
+    assert body["max_bankroll_fraction"] == 0.25
+
+
+def test_sizing_config_custom(market_store, opportunity_service, alert_config):
+    app = create_app(
+        market_store=market_store,
+        opportunity_service=opportunity_service,
+        alert_config=alert_config,
+        sizing_config={"bankroll_usd": 2000.0, "max_bankroll_fraction": 0.25},
+    )
+    c = TestClient(app)
+    body = c.get("/config/sizing").json()
+    assert body["bankroll_usd"] == 2000.0
+    assert body["max_bankroll_fraction"] == 0.25

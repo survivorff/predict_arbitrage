@@ -246,9 +246,16 @@ const catLabel = (c)=> c?(CAT_LABEL[c]||c):'';
 
 const state = {
   markets:[], opps:[], groups:[], health:null, metrics:null,
+  sizing:{bankroll_usd:0, max_bankroll_fraction:0.25},
   mktSearch:'', mktPlatform:'', mktCategory:'', mktSort:'volume_usd', mktDir:'desc',
   grpSearch:'', grpConf:0,
 };
+// 建议投入 = min(可成交规模, bankroll×比例)。bankroll 未配置(=0)时仅受可成交规模约束。
+function suggestStake(recommendedSizeUsd){
+  const b=state.sizing.bankroll_usd||0, f=state.sizing.max_bankroll_fraction||0.25;
+  if(b>0) return Math.min(recommendedSizeUsd, b*f);
+  return recommendedSizeUsd;
+}
 
 async function getJSON(p){ const r=await fetch(p); if(!r.ok) throw new Error(p+' -> '+r.status); return r.json(); }
 function sortBy(arr,key,dir){ const s=dir==='asc'?1:-1; return [...arr].sort((a,b)=>{const va=a[key],vb=b[key]; if(va==null&&vb==null)return 0; if(va==null)return 1; if(vb==null)return -1; if(typeof va==='string')return s*va.localeCompare(vb); return s*(va-vb);}); }
@@ -468,11 +475,15 @@ function renderOpps(){
       }
     }
     const sizeWarn = o.recommended_size_usd<100 ? ` <span class="verify">· 规模小，链上 gas 可能吃掉利润</span>` : '';
+    const stake=suggestStake(o.recommended_size_usd);
+    const stakeNote = state.sizing.bankroll_usd>0
+      ? `建议投入 ${fmtUsd(stake)}（本金 ${fmtUsd(state.sizing.bankroll_usd)}×${(state.sizing.max_bankroll_fraction*100).toFixed(0)}% 与可成交规模取小）`
+      : `可成交规模 ${fmtUsd(o.recommended_size_usd)}`;
     html+=`<div class="opp">
       <div class="opp-top"><a class="opp-title row-link" href="#/match/${gid}">${esc(o.event_title)}</a>
         <div class="edge"><div class="pct ${o.net_profit_margin>0?'pos':'neg'}">${pct1(o.net_profit_margin)}</div><div class="lbl">净利润率</div></div></div>
       <div class="legs">${legsHtml}</div>
-      <div class="directive">两腿买入，可成交规模 ${fmtUsd(o.recommended_size_usd)}${sizeWarn}</div>
+      <div class="directive">两腿买入 · ${stakeNote}${sizeWarn}</div>
       ${reliab}
       <div class="opp-foot">
         <span>${confHtml} ${lowConf?'<span class="verify">· 务必核对是否同一事件</span>':''}</span>
@@ -751,6 +762,7 @@ async function refresh(){
   try{
     const [h,m,opps,sigs,groups,markets]=await Promise.all([getJSON('/health'),getJSON('/metrics'),getJSON('/opportunities'),getJSON('/signals'),getJSON('/groups'),getJSON('/markets')]);
     state.opps=opps; state.groups=groups; state.markets=markets;
+    try{ state.sizing=await getJSON('/config/sizing'); }catch(e){}
     renderHealth(h); renderMetrics(m); renderStats();
     renderOpps(); renderGroups(); renderMarkets(); renderSignals(sigs);
     try{ renderPlans(await getJSON('/trade/plans')); }catch(e){ renderPlans([]); }

@@ -690,6 +690,10 @@ def build_application(
         ),
         onchain_balances=onchain_balances or None,
         staleness_threshold=settings.staleness_threshold_seconds,
+        sizing_config={
+            "bankroll_usd": config.risk.bankroll_usd,
+            "max_bankroll_fraction": config.risk.max_bankroll_fraction,
+        },
     )
 
     application = ScannerApplication(

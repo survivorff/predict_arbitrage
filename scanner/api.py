@@ -420,6 +420,7 @@ def create_app(
     trade_api_key: Optional[str] = None,
     onchain_balances: Optional[Dict[str, Dict[str, object]]] = None,
     staleness_threshold: float = DEFAULT_STALENESS_THRESHOLD_SECONDS,
+    sizing_config: Optional[Dict[str, float]] = None,
 ) -> FastAPI:
     """Build the Read API over injected stores and services (Req 7.4).
 
@@ -454,6 +455,15 @@ def create_app(
     alerts = alert_config or AlertConfig()
 
     app = FastAPI(title="Prediction Market Arbitrage Scanner", version="0.2.0")
+
+    # 仓位建议配置（bankroll/¼-Kelly）：供仪表盘计算并展示「建议投入」。只读、非敏感
+    # （是运营者自己的本金设定，且仅自用仪表盘消费）。未配置时 bankroll=0（不约束）。
+    _sizing = dict(sizing_config or {"bankroll_usd": 0.0, "max_bankroll_fraction": 0.25})
+
+    @app.get("/config/sizing")
+    def get_sizing_config() -> Dict[str, float]:
+        """返回仓位建议配置（bankroll + 单笔最大比例），供前端计算「建议投入」。"""
+        return _sizing
 
     def _require_trade_auth(x_api_key: Optional[str] = Header(default=None)) -> None:
         """交易（写）端点鉴权依赖。
