@@ -140,7 +140,7 @@ alerts:
   # 凭证只经环境变量注入，绝不写入配置/日志。缺失则该通道优雅降级（跳过）。
   channels:
     - log
-    # - telegram
+    - telegram
     # - lark
   criteria:
     # Only alert on opportunities whose net profit margin meets this threshold.
@@ -164,7 +164,7 @@ risk:
   # of your bankroll, to bound drawdown if a "supposedly risk-free" arb fails (leg
   # risk / resolution mismatch). Set bankroll_usd to your investable capital.
   # bankroll_usd: 0 (default) disables this cap entirely.
-  bankroll_usd: 0.0                # your investable capital in USD (0 = disabled)
+  bankroll_usd: 2000.0             # your investable capital in USD (0 = disabled)
   max_bankroll_fraction: 0.25      # max fraction of bankroll per single trade
   dry_run: true                    # SAFETY: true = never submit real orders
   require_confirmation: true       # require human confirmation before execution
